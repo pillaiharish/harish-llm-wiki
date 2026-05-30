@@ -1,0 +1,23 @@
+# YouTube resources
+https://www.youtube.com/watch?v=r2m9DbEmeqI&t=670s
+https://www.youtube.com/watch?v=v6g8eo86T8A
+https://www.youtube.com/watch?v=r0Dciuq0knU
+https://www.youtube.com/watch?v=fR1HVMDnaqA
+https://www.youtube.com/watch?v=yHAcgyntYDQ&t=395s
+https://www.youtube.com/watch?v=ViBaXbUPDt0
+https://www.youtube.com/watch?v=smGbeghV1JE&t=304s
+https://www.youtube.com/watch?v=HdafI0t3sEY&t=12s
+https://www.youtube.com/watch?v=89NuzmKokIk&t=10s
+https://www.youtube.com/watch?v=VSFuqMh4hus&t=130s
+https://www.youtube.com/watch?v=JNHpZUpeOCg
+https://www.youtube.com/watch?v=nbZzSC5A6hs&t=172s
+https://www.youtube.com/watch?v=qQIOUxhC4Xs&t=180s
+https://www.youtube.com/watch?v=FdqrP7jvZEo&t=14s
+https://www.youtube.com/watch?v=1a1VXDdIyrk&t=225s
+https://www.youtube.com/watch?v=q5IF2PHA5SA&t=483s
+
+# This one is a duplicate (should be skipped)
+https://www.youtube.com/watch?v=fR1HVMDnaqA
+
+# Blog resources
+https://www.aleksagordic.com/blog/vllm

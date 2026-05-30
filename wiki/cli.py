@@ -1,0 +1,660 @@
+"""CLI for Harish LLM Wiki."""
+
+import logging
+from pathlib import Path
+from typing import Optional, List
+
+import typer
+from rich.console import Console
+from rich.table import Table
+from rich import box
+
+from wiki.config import config
+from wiki.schemas import ResourceStatus, BatchAddResult
+from wiki.registry import registry
+from wiki.dedupe import deduplicator, ResourceIdentity
+from wiki.ingest.youtube import youtube_ingestor
+from wiki.ingest.webpage import webpage_ingestor
+from wiki.ingest.markdown import markdown_ingestor
+from wiki.normalize.transcript import youtube_normalizer
+from wiki.normalize.webpage import webpage_normalizer
+from wiki.normalize.markdown import markdown_normalizer
+from wiki.llm.ollama_cloud import OllamaCloudProvider
+from wiki.llm.ollama_local import OllamaLocalProvider
+from wiki.llm.openai_compatible import OpenAICompatibleProvider
+from wiki.llm.mock import MockProvider
+from wiki.llm.base import LLMProvider
+from wiki.generate.notes import get_note_generator
+from wiki.generate.concepts import concept_extractor
+from wiki.generate.timeline import timeline_generator
+from wiki.generate.gaps import gaps_generator
+from wiki.generate.tags import tags_generator
+from wiki.site.builder import site_builder
+
+app = typer.Typer(
+    name="wiki",
+    help="Harish LLM Wiki - Personal static learning wiki",
+    no_args_is_help=True,
+)
+console = Console()
+
+
+def get_provider() -> LLMProvider:
+    """Get the configured LLM provider."""
+    provider_name = config.LLM_PROVIDER
+    
+    if provider_name == "ollama_cloud":
+        return OllamaCloudProvider()
+    elif provider_name == "ollama_local":
+        return OllamaLocalProvider()
+    elif provider_name == "openai_compatible":
+        return OpenAICompatibleProvider()
+    elif provider_name == "mock":
+        return MockProvider()
+    else:
+        raise ValueError(f"Unknown LLM provider: {provider_name}")
+
+
+@app.command()
+def init():
+    """Initialize the wiki directory structure."""
+    console.print("[bold blue]Initializing Harish LLM Wiki...[/bold blue]")
+    
+    # Validate config
+    errors = config.validate()
+    if errors:
+        console.print("[bold red]Configuration errors:[/bold red]")
+        for error in errors:
+            console.print(f"  - {error}")
+        raise typer.Exit(1)
+    
+    # Create directories
+    config.ensure_directories()
+    
+    console.print(f"[green]✓[/green] Data directory: {config.LLM_WIKI_DATA_DIR}")
+    console.print(f"[green]✓[/green] LLM Provider: {config.LLM_PROVIDER}")
+    console.print("[green]✓[/green] Initialization complete!")
+    console.print("\nNext steps:")
+    console.print("  1. Add resources: wiki add-batch --file <path>")
+    console.print("  2. Process new: wiki process-new")
+    console.print("  3. Build site: wiki build-site")
+
+
+@app.command()
+def add_resource(
+    url: str = typer.Option(..., "--url", "-u", help="URL to add"),
+    tags: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Tags for the resource"),
+):
+    """Add a single resource to the registry."""
+    console.print(f"[bold blue]Adding resource:[/bold blue] {url}")
+    
+    # Canonicalize
+    identity = deduplicator.canonicalize(url)
+    if not identity:
+        console.print(f"[red]✗[/red] Could not canonicalize URL: {url}")
+        raise typer.Exit(1)
+    
+    # Check for duplicate
+    existing = registry.get_by_canonical_id(identity.canonical_id)
+    if existing:
+        console.print(f"[yellow]⚠[/yellow] Resource already exists: {existing.id}")
+        console.print(f"  Status: {existing.status.value}")
+        
+        # Update timestamps if it's a YouTube video with timestamp
+        if identity.start_time_seconds and existing.extra.get('important_timestamps'):
+            registry.update_timestamps(existing.id, identity.start_time_seconds)
+            console.print(f"  Updated timestamps")
+        
+        return
+    
+    # Insert new resource
+    record = registry.insert(identity, status=ResourceStatus.NEW)
+    if tags:
+        record.tags = list(tags)
+        registry.update(record)
+    
+    console.print(f"[green]✓[/green] Added: {record.id}")
+
+
+@app.command()
+def add_batch(
+    file: Path = typer.Option(..., "--file", "-f", help="Path to batch file with URLs"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be added without modifying"),
+):
+    """Add resources from a batch file."""
+    console.print(f"[bold blue]Processing batch:[/bold blue] {file}")
+    
+    if dry_run:
+        console.print("[yellow]DRY RUN - No changes will be made[/yellow]\n")
+    
+    if not file.exists():
+        console.print(f"[red]✗[/red] File not found: {file}")
+        raise typer.Exit(1)
+    
+    # Read and parse file
+    lines = file.read_text(encoding="utf-8").strip().split("\n")
+    
+    total = 0
+    valid = 0
+    new = 0
+    duplicates = 0
+    youtube_videos = 0
+    blog_resources = 0
+    unsupported = 0
+    errors: List[str] = []
+    
+    # Track what would be added
+    to_add: List[tuple[str, str]] = []  # (url, canonical_id)
+    duplicate_ids: List[tuple[str, str]] = []  # (url, existing_id)
+    
+    for line in lines:
+        line = line.strip()
+        total += 1
+        
+        # Skip empty lines and comments
+        if not line or line.startswith("#"):
+            continue
+        
+        valid += 1
+        
+        # Canonicalize
+        identity = deduplicator.canonicalize(line)
+        if not identity:
+            unsupported += 1
+            errors.append(f"Unsupported URL: {line}")
+            continue
+        
+        # Check for duplicate
+        existing = registry.get_by_canonical_id(identity.canonical_id)
+        if existing:
+            duplicates += 1
+            duplicate_ids.append((line, existing.id))
+            
+            if not dry_run:
+                # Update timestamps if it's a YouTube video with timestamp
+                if identity.start_time_seconds:
+                    registry.update_timestamps(existing.id, identity.start_time_seconds)
+            
+            continue
+        
+        # Track counts by type
+        if identity.source_type.value == "youtube":
+            youtube_videos += 1
+        else:
+            blog_resources += 1
+        
+        # Track new resource
+        to_add.append((line, identity.canonical_id))
+        
+        if not dry_run:
+            # Insert new resource
+            try:
+                registry.insert(identity, status=ResourceStatus.NEW)
+                new += 1
+            except Exception as e:
+                errors.append(f"Failed to add {line}: {e}")
+        else:
+            new += 1  # For dry-run count
+    
+    # Print results
+    console.print(f"\n[bold]Batch Results:[/bold]")
+    console.print(f"  Total lines: {total}")
+    console.print(f"  Valid URLs: {valid}")
+    console.print(f"  [green]New resources: {new}[/green]")
+    console.print(f"    - YouTube videos: {youtube_videos}")
+    console.print(f"    - Blog/resources: {blog_resources}")
+    console.print(f"  [yellow]Duplicates skipped: {duplicates}[/yellow]")
+    if unsupported > 0:
+        console.print(f"  [red]Unsupported URLs: {unsupported}[/red]")
+    
+    # In dry-run mode, show details
+    if dry_run:
+        if to_add:
+            console.print("\n[dim]Resources that would be added:[/dim]")
+            for url, canonical_id in to_add[:10]:  # Show first 10
+                console.print(f"  [green]+[/green] {url[:60]}...")
+                console.print(f"      → {canonical_id}")
+            if len(to_add) > 10:
+                console.print(f"  ... and {len(to_add) - 10} more")
+        
+        if duplicate_ids:
+            console.print("\n[dim]Duplicates that would be skipped:[/dim]")
+            for url, existing_id in duplicate_ids[:5]:  # Show first 5
+                console.print(f"  [yellow]-[/yellow] {url[:60]}...")
+                console.print(f"      → Already exists as: {existing_id}")
+            if len(duplicate_ids) > 5:
+                console.print(f"  ... and {len(duplicate_ids) - 5} more duplicates")
+        
+        console.print("\n[dim]No changes made (dry-run mode)[/dim]")
+    elif errors:
+        console.print(f"\n[red]Errors:[/red]")
+        for error in errors[:10]:
+            console.print(f"  - {error}")
+
+
+@app.command()
+def list_resources(
+    status: Optional[str] = typer.Option(None, "--status", "-s", help="Filter by status"),
+    limit: int = typer.Option(50, "--limit", "-n", help="Maximum number to show"),
+):
+    """List all resources in the registry."""
+    console.print("[bold blue]Resources[/bold blue]\n")
+    
+    # Get filter
+    status_filter = None
+    if status:
+        try:
+            status_filter = ResourceStatus(status)
+        except ValueError:
+            console.print(f"[red]Invalid status: {status}[/red]")
+            raise typer.Exit(1)
+    
+    # Get records
+    records = list(registry.get_all(status_filter))
+    
+    # Create table
+    table = Table(box=box.SIMPLE)
+    table.add_column("ID", style="cyan")
+    table.add_column("Type", style="green")
+    table.add_column("Status", style="yellow")
+    table.add_column("Title", style="white")
+    table.add_column("First Seen", style="dim")
+    
+    for record in records[:limit]:
+        title = (record.title or "Untitled")[:40]
+        if len(record.title or "") > 40:
+            title += "..."
+        
+        table.add_row(
+            record.id[:30],
+            record.source_type.value,
+            record.status.value,
+            title,
+            record.first_seen_at.strftime("%Y-%m-%d")
+        )
+    
+    console.print(table)
+    console.print(f"\nShowing {min(limit, len(records))} of {len(records)} resources")
+
+
+@app.command()
+def list_pending():
+    """List resources waiting to be processed."""
+    console.print("[bold blue]Pending Resources[/bold blue]\n")
+    
+    records = list(registry.get_pending())
+    
+    if not records:
+        console.print("[dim]No pending resources.[/dim]")
+        return
+    
+    table = Table(box=box.SIMPLE)
+    table.add_column("ID", style="cyan")
+    table.add_column("Type", style="green")
+    table.add_column("Status", style="yellow")
+    table.add_column("URL", style="white")
+    
+    for record in records:
+        url = record.original_url[:50]
+        if len(record.original_url) > 50:
+            url += "..."
+        
+        table.add_row(
+            record.id[:30],
+            record.source_type.value,
+            record.status.value,
+            url
+        )
+    
+    console.print(table)
+    console.print(f"\n{len(records)} resource(s) pending")
+
+
+@app.command()
+def process_new(
+    force: bool = typer.Option(False, "--force", help="Force reprocessing"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be done without modifying"),
+    limit: Optional[int] = typer.Option(None, "--limit", "-n", help="Limit number of resources to process"),
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation for LLM calls"),
+):
+    """Process new resources through the pipeline."""
+    console.print("[bold blue]Processing new resources...[/bold blue]\n")
+    
+    if dry_run:
+        console.print("[yellow]DRY RUN - No changes will be made[/yellow]\n")
+    
+    # Get pending resources
+    records = list(registry.get_pending())
+    
+    if not records:
+        console.print("[dim]No new resources to process.[/dim]")
+        return
+    
+    # Apply limit if specified
+    total_pending = len(records)
+    if limit and limit < total_pending:
+        records = records[:limit]
+    
+    console.print(f"Found {total_pending} resource(s) pending")
+    if limit:
+        console.print(f"Processing: {len(records)} (limited by --limit)")
+    console.print()
+    
+    # Safety check for real LLM calls
+    if not dry_run and config.LLM_PROVIDER != "mock":
+        needs_llm = sum(1 for r in records if not r.generated_note_path)
+        if needs_llm > 2 and not yes:
+            console.print(f"[yellow]Warning:[/yellow] About to process {needs_llm} resources using {config.LLM_PROVIDER}")
+            console.print("This may consume cloud tokens.")
+            console.print("Use --yes to continue or use LLM_PROVIDER=mock for testing.")
+            raise typer.Exit(1)
+    
+    # Get LLM provider (only if we'll generate notes)
+    provider = None
+    
+    # Track dry-run stats
+    would_ingest = 0
+    would_normalize = 0
+    would_call_llm = 0
+    would_cache_hit = 0
+    would_need_manual = 0
+    
+    for record in records:
+        console.print(f"Processing: [cyan]{record.id}[/cyan]")
+        
+        if dry_run:
+            # In dry-run mode, analyze what would be done
+            console.print("  [dim]Analysis:[/dim]")
+            
+            if record.status == ResourceStatus.NEEDS_MANUAL_MARKDOWN:
+                console.print("  [yellow]⚠ Would mark as 'needs_manual_markdown'[/yellow]")
+                would_need_manual += 1
+                continue
+            
+            console.print("  [dim]  - Would ingest raw content[/dim]")
+            would_ingest += 1
+            
+            console.print("  [dim]  - Would normalize and chunk[/dim]")
+            would_normalize += 1
+            
+            # Check if note exists (for cache hit estimation)
+            if record.generated_note_path and record.generated_note_path.exists():
+                console.print("  [dim]  - Note exists, would check cache[/dim]")
+                would_cache_hit += 1
+            else:
+                console.print("  [dim]  - Would call LLM ({})[/dim]".format(config.LLM_PROVIDER))
+                would_call_llm += 1
+            
+            continue
+        
+        # Step 1: Ingest
+        try:
+            if record.source_type.value == "youtube":
+                youtube_ingestor.ingest(record)
+            elif record.source_type.value == "webpage":
+                webpage_ingestor.ingest(record)
+            elif record.source_type.value == "markdown":
+                # Markdown is already ingested via import-markdown
+                pass
+            
+            registry.update_status(record.id, ResourceStatus.RAW_SAVED)
+            console.print("  [green]✓[/green] Ingested")
+        except Exception as e:
+            console.print(f"  [red]✗ Ingest failed: {e}[/red]")
+            registry.update_status(record.id, ResourceStatus.FAILED_RETRYABLE, str(e))
+            continue
+        
+        # Step 2: Normalize
+        try:
+            if record.source_type.value == "youtube":
+                youtube_normalizer.normalize(record)
+            elif record.source_type.value == "webpage":
+                webpage_normalizer.normalize(record)
+            elif record.source_type.value == "markdown":
+                markdown_normalizer.normalize(record)
+            
+            registry.update(record)
+            console.print("  [green]✓[/green] Normalized")
+        except Exception as e:
+            console.print(f"  [red]✗ Normalize failed: {e}[/red]")
+            registry.update_status(record.id, ResourceStatus.FAILED_RETRYABLE, str(e))
+            continue
+        
+        # Step 3: Generate notes (if not already cached)
+        try:
+            if not provider:
+                provider = get_provider()
+            
+            generator = get_note_generator(provider)
+            result = generator.generate(record)
+            
+            if record.status == ResourceStatus.LLM_CACHE_HIT:
+                console.print("  [dim]✓ Cache hit (no LLM call)[/dim]")
+            else:
+                console.print("  [green]✓[/green] Generated notes")
+            
+            registry.update(record)
+        except Exception as e:
+            console.print(f"  [red]✗ Note generation failed: {e}[/red]")
+            registry.update_status(record.id, ResourceStatus.FAILED_RETRYABLE, str(e))
+            continue
+        
+        # Mark as processed
+        from datetime import datetime
+        record.processed_at = datetime.utcnow()
+        record.status = ResourceStatus.PROCESSED
+        registry.update(record)
+        
+        console.print(f"  [green]✓[/green] Complete\n")
+    
+    if dry_run:
+        console.print("\n[bold]Dry-Run Summary:[/bold]")
+        console.print(f"  Resources to ingest: {would_ingest}")
+        console.print(f"  Resources to normalize: {would_normalize}")
+        console.print(f"  LLM calls needed: {would_call_llm}")
+        console.print(f"  Cache hits expected: {would_cache_hit}")
+        if would_need_manual:
+            console.print(f"  Need manual Markdown: {would_need_manual}")
+        console.print("\n[dim]No changes made (dry-run mode)[/dim]")
+    else:
+        console.print("[bold green]Processing complete![/bold green]")
+
+
+@app.command()
+def generate_notes(
+    resource_id: Optional[str] = typer.Option(None, "--resource", "-r", help="Specific resource ID"),
+    limit: Optional[int] = typer.Option(None, "--limit", "-n", help="Limit number of resources"),
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation for LLM calls"),
+):
+    """Generate LLM notes for processed resources."""
+    console.print("[bold blue]Generating notes...[/bold blue]\n")
+    
+    provider = get_provider()
+    generator = get_note_generator(provider)
+    
+    if resource_id:
+        # Generate for specific resource
+        record = registry.get_by_id(resource_id)
+        if not record:
+            console.print(f"[red]Resource not found: {resource_id}[/red]")
+            raise typer.Exit(1)
+        
+        try:
+            generator.generate(record)
+            registry.update(record)
+            console.print(f"[green]✓[/green] Generated notes for {resource_id}")
+        except Exception as e:
+            console.print(f"[red]✗ Failed: {e}[/red]")
+    else:
+        # Get eligible records
+        records = list(registry.get_all())
+        eligible = [r for r in records if r.local_normalized_path]
+        
+        # Apply limit
+        total_eligible = len(eligible)
+        if limit and limit < total_eligible:
+            eligible = eligible[:limit]
+        
+        console.print(f"Found {total_eligible} resource(s) with normalized content")
+        if limit:
+            console.print(f"Processing: {len(eligible)} (limited by --limit)")
+        console.print()
+        
+        # Safety check for real LLM calls
+        if config.LLM_PROVIDER != "mock":
+            needs_llm = sum(1 for r in eligible if not (r.generated_note_path and r.generated_note_path.exists()))
+            if needs_llm > 2 and not yes:
+                console.print(f"[yellow]Warning:[/yellow] About to generate notes for {needs_llm} resources using {config.LLM_PROVIDER}")
+                console.print("This may consume cloud tokens.")
+                console.print("Use --yes to continue or use LLM_PROVIDER=mock for testing.")
+                raise typer.Exit(1)
+        
+        for record in eligible:
+            try:
+                generator.generate(record)
+                registry.update(record)
+                console.print(f"[green]✓[/green] {record.id}")
+            except Exception as e:
+                console.print(f"[red]✗[/red] {record.id}: {e}")
+
+
+@app.command()
+def build_site():
+    """Build the static VitePress site."""
+    console.print("[bold blue]Building site...[/bold blue]\n")
+    
+    # Step 1: Generate supporting files
+    records = list(registry.get_all())
+    
+    # Generate concepts
+    console.print("Generating concepts...")
+    concept_extractor.aggregate(records)
+    concept_extractor.save()
+    console.print("  [green]✓[/green] Concepts saved")
+    
+    # Generate timeline
+    console.print("Generating timeline...")
+    periods = timeline_generator.generate(records)
+    timeline_generator.save(periods)
+    console.print("  [green]✓[/green] Timeline saved")
+    
+    # Generate tags
+    console.print("Generating tags...")
+    tags = tags_generator.generate(records)
+    tags_generator.save(tags)
+    console.print("  [green]✓[/green] Tags saved")
+    
+    # Generate gaps
+    console.print("Generating gaps report...")
+    gaps = gaps_generator.generate(records)
+    gaps_generator.save(gaps)
+    console.print("  [green]✓[/green] Gaps saved")
+    
+    # Step 2: Build site
+    console.print("\nBuilding VitePress site...")
+    site_path = site_builder.build(records)
+    console.print(f"  [green]✓[/green] Site built: {site_path}")
+    
+    console.print("\n[bold green]Site build complete![/bold green]")
+    console.print(f"\nTo view locally:")
+    console.print(f"  cd site && npm install && npm run docs:dev")
+
+
+@app.command()
+def validate():
+    """Validate the wiki configuration and content."""
+    console.print("[bold blue]Validating wiki...[/bold blue]\n")
+    
+    issues = []
+    
+    # Check .env not committed
+    git_dir = Path(__file__).parent.parent / ".git"
+    if git_dir.exists():
+        # This is a basic check - a full implementation would use git commands
+        pass
+    
+    # Check provider configuration
+    if config.LLM_PROVIDER == "ollama_cloud":
+        if not config.OLLAMA_CLOUD_API_KEY:
+            issues.append(("error", "OLLAMA_CLOUD_API_KEY not set"))
+        if not config.OLLAMA_CLOUD_MODEL:
+            issues.append(("error", "OLLAMA_CLOUD_MODEL not set"))
+    
+    # Check resources
+    records = list(registry.get_all())
+    
+    for record in records:
+        # Check for missing provenance
+        if record.status == ResourceStatus.PROCESSED:
+            if not record.llm_model:
+                issues.append(("warning", f"{record.id}: Missing LLM model in provenance"))
+            if not record.prompt_version:
+                issues.append(("warning", f"{record.id}: Missing prompt version"))
+        
+        # Check for missing files
+        if record.status.value in ["raw_saved", "normalized", "processed"]:
+            if record.local_raw_path and not record.local_raw_path.exists():
+                issues.append(("error", f"{record.id}: Missing raw files"))
+    
+    # Print results
+    if issues:
+        console.print(f"[yellow]Found {len(issues)} issue(s):[/yellow]\n")
+        for severity, message in issues:
+            icon = "[red]✗[/red]" if severity == "error" else "[yellow]⚠[/yellow]"
+            console.print(f"  {icon} {message}")
+    else:
+        console.print("[green]✓[/green] All checks passed!")
+
+
+@app.command()
+def full_run():
+    """Run the complete pipeline."""
+    console.print("[bold blue]Running full pipeline...[/bold blue]\n")
+    
+    # Step 1: Process new
+    console.print("[bold]Step 1:[/bold] Processing new resources")
+    process_new()
+    
+    # Step 2: Build site
+    console.print("\n[bold]Step 2:[/bold] Building site")
+    build_site()
+    
+    # Step 3: Validate
+    console.print("\n[bold]Step 3:[/bold] Validating")
+    validate()
+    
+    console.print("\n[bold green]Full pipeline complete![/bold green]")
+
+
+@app.command()
+def import_markdown(
+    file: Path = typer.Option(..., "--file", "-f", help="Path to Markdown file"),
+    original_url: Optional[str] = typer.Option(None, "--url", "-u", help="Original URL if available"),
+):
+    """Import a manually saved Markdown file."""
+    console.print(f"[bold blue]Importing Markdown:[/bold blue] {file}")
+    
+    if not file.exists():
+        console.print(f"[red]✗[/red] File not found: {file}")
+        raise typer.Exit(1)
+    
+    # Read content and canonicalize
+    content = file.read_text(encoding="utf-8")
+    identity = deduplicator.canonicalize_markdown(content, original_url)
+    
+    # Check for duplicate
+    existing = registry.get_by_canonical_id(identity.canonical_id)
+    if existing:
+        console.print(f"[yellow]⚠[/yellow] Duplicate content: {existing.id}")
+        return
+    
+    # Insert and ingest
+    record = registry.insert(identity, status=ResourceStatus.NEW)
+    record = markdown_ingestor.ingest(file, record, original_url)
+    registry.update(record)
+    
+    console.print(f"[green]✓[/green] Imported: {record.id}")
+
+
+if __name__ == "__main__":
+    app()

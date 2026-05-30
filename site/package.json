@@ -1,0 +1,15 @@
+{
+  "name": "harish-llm-wiki-site",
+  "version": "0.1.0",
+  "description": "VitePress site for Harish LLM Wiki",
+  "type": "module",
+  "scripts": {
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
+  },
+  "devDependencies": {
+    "vitepress": "^1.0.0-rc.40",
+    "vue": "^3.4.0"
+  }
+}

@@ -1,0 +1,51 @@
+# Example resource configuration for Harish LLM Wiki
+# Copy this file and customize for your needs
+
+resources:
+  # YouTube Video Example
+  - id: "yt-karpathy-tokenization-001"
+    type: "youtube"
+    url: "https://www.youtube.com/watch?v=zduSFxFjLEw"
+    title: "Let's build the GPT Tokenizer"
+    author: "Andrej Karpathy"
+    user_added_at: "2026-05-30"
+    user_watched_at: "2025-09-12"
+    tags:
+      - llm
+      - tokenization
+      - karpathy-style
+      - implementation
+    importance: "high"
+    notes_from_user: "This helped me understand tokenization but I forgot the details."
+
+  # Medium/Blog Markdown Example
+  - id: "medium-rag-chunking-001"
+    type: "medium_markdown"
+    source_file: "inputs/medium/sample_rag_article.md"
+    original_url: "https://medium.com/example/rag-chunking-guide"
+    title: "RAG Chunking Strategies"
+    author: "Example Author"
+    user_added_at: "2026-05-30"
+    user_read_at: "2025-09-01"
+    tags:
+      - rag
+      - chunking
+      - embeddings
+      - best-practices
+    importance: "high"
+    notes_from_user: "Good blog about chunking decisions for production RAG systems."
+
+  # Blog Post Example
+  - id: "webpage-vllm-blog-001"
+    type: "webpage"
+    url: "https://www.aleksagordic.com/blog/vllm"
+    title: "vLLM: Easy, Fast, and Cheap LLM Serving"
+    author: "Aleksa Gordic"
+    user_added_at: "2026-05-30"
+    tags:
+      - vllm
+      - llm-inference
+      - serving
+      - gpu
+    importance: "high"
+    notes_from_user: "Important for understanding high-throughput LLM serving."
