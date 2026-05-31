@@ -89,6 +89,8 @@ class TimelineGenerator:
         """
         timeline_dir = config.get_data_path("processed", "timeline")
         timeline_dir.mkdir(parents=True, exist_ok=True)
+        for old in list(timeline_dir.glob("*.md")) + list(timeline_dir.glob("*.json")):
+            old.unlink()
         
         # Generate Markdown
         md_content = self._format_timeline_markdown(periods)

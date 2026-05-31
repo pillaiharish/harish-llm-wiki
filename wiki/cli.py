@@ -198,8 +198,53 @@ def is_note_stale(record, target_provider: str, target_model: str) -> bool:
     return bool(stale_reasons(record, target_provider, target_model))
 
 
-def generate_derived_views(records=None) -> None:
-    """Regenerate derived views without calling an LLM."""
+def _count_files(directory: Path, pattern: str = "*.md") -> int:
+    if not directory.exists():
+        return 0
+    return len(list(directory.glob(pattern)))
+
+
+def write_generation_manifest(records, *, concepts=None, tags=None, topics=None,
+                               learn=None, gaps=None, review=None, revision=None,
+                               indexes=None) -> Path:
+    """Write generated_manifest.json after all derived views finish."""
+    manifest = {
+        "generated_at": datetime.utcnow().isoformat(),
+        "resource_count": len(list(records)) if records else 0,
+        "concept_count": len(concepts) if concepts else _count_files(config.get_data_path("processed", "concepts"), "*.md"),
+        "tag_count": len(tags) if tags else 0,
+        "topic_count": len(topics) if topics else _count_files(config.get_data_path("processed", "topics"), "*.md"),
+        "learn_page_count": len(learn) if learn else _count_files(config.get_data_path("processed", "learn"), "*.md"),
+        "review_item_count": sum(len(v) for v in (review or {}).values()) if isinstance(review, dict) else 0,
+        "revision_question_count": len(revision.get("questions", [])) if isinstance(revision, dict) and revision else 0,
+        "search_index_items": len((indexes or {}).get("all", [])),
+        "gaps_count": len(gaps.needs_verification) + len(gaps.weak_examples) + len(gaps.missing_project_connection) + len(gaps.resources_missing_metadata) if gaps else 0,
+        "timeline_periods": _count_files(config.get_data_path("processed", "timeline"), "*.json"),
+        "outputs": {
+            "concepts": str(config.get_data_path("processed", "concepts")),
+            "timeline": str(config.get_data_path("processed", "timeline", "timeline.md")),
+            "tags": str(config.get_data_path("processed", "tags", "tags.md")),
+            "topics": str(config.get_data_path("processed", "topics")),
+            "gaps": str(config.get_data_path("processed", "gaps", "gaps.md")),
+            "learn": str(config.get_data_path("processed", "learn")),
+            "review": str(config.get_data_path("processed", "review")),
+            "search": str(config.get_data_path("processed", "search")),
+            "revision": str(config.get_data_path("processed", "revision")),
+            "explorer": str(config.get_data_path("site_generated", "docs", "explorer", "index.md")),
+            "sources": str(config.get_data_path("site_generated", "docs", "sources", "index.md")),
+        },
+    }
+    manifest_path = config.get_data_path("processed", "generated_manifest.json")
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    Storage.write_json(manifest, manifest_path)
+    return manifest_path
+
+
+def generate_derived_views(records=None) -> dict:
+    """Regenerate derived views without calling an LLM.
+
+    Returns the manifest dict with counts.
+    """
     records = list(records or registry.get_all())
 
     console.print("Generating concepts...")
@@ -247,6 +292,22 @@ def generate_derived_views(records=None) -> None:
     revision = revision_generator.generate(records)
     revision_generator.save(revision)
     console.print("  [green]✓[/green] Revision pages saved")
+
+    console.print("Writing generation manifest...")
+    manifest_path = write_generation_manifest(
+        records, concepts=concept_extractor.concepts, tags=tags, topics=topics,
+        learn=learn, gaps=gaps, review=review, revision=revision, indexes=indexes,
+    )
+    console.print("  [green]✓[/green] Manifest saved")
+
+    manifest = Storage.read_json(manifest_path)
+    console.print(f"\n  Resources: {manifest['resource_count']}")
+    console.print(f"  Tags: {manifest['tag_count']}")
+    console.print(f"  Gaps: {manifest['gaps_count']}")
+    console.print(f"  Learn pages: {manifest['learn_page_count']}")
+    console.print(f"  Search index items: {manifest['search_index_items']}")
+
+    return manifest
 
 
 def quality_gate_issues(records) -> list[str]:
@@ -1060,7 +1121,7 @@ def regenerate_views():
     """Regenerate derived views and site docs without LLM calls."""
     console.print("[bold blue]Regenerating derived views...[/bold blue]\n")
     records = list(registry.get_all())
-    generate_derived_views(records)
+    manifest = generate_derived_views(records)
     site_path = site_builder.build(records)
     console.print(f"\n[green]✓[/green] Derived views regenerated: {site_path}")
 
@@ -1257,6 +1318,20 @@ def smoke_site():
         if not path.exists():
             warnings.append((label, f"Not synced to repo site: {path}"))
 
+    # Check generation manifest
+    manifest_path = config.get_data_path("processed", "generated_manifest.json")
+    if not manifest_path.exists():
+        warnings.append(("Generation manifest", "Missing generated_manifest.json. Run build-site --refresh."))
+    else:
+        try:
+            manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not manifest_data.get("generated_at"):
+                warnings.append(("Generation manifest", "Manifest missing generated_at timestamp."))
+            if not manifest_data.get("resource_count"):
+                warnings.append(("Generation manifest", "Manifest reports 0 resources."))
+        except json.JSONDecodeError:
+            errors.append(("Generation manifest", f"Invalid JSON: {manifest_path}"))
+
     if errors:
         console.print(f"[red]Smoke test found {len(errors)} error(s) and {len(warnings)} warning(s):[/red]\n")
         for label, msg in errors:
@@ -1342,6 +1417,24 @@ def validate(
                     issues.append(("warning", f"{label} has no level-1 heading: {path}"))
         except Exception as exc:
             issues.append(("warning", f"{label} read error: {exc}"))
+
+    # Check generation manifest staleness
+    manifest_path = config.get_data_path("processed", "generated_manifest.json")
+    if not manifest_path.exists():
+        issues.append(("warning", "Missing generated_manifest.json. Run build-site --refresh."))
+    else:
+        try:
+            manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest_at = manifest_data.get("generated_at", "")
+            if manifest_at:
+                from datetime import timezone as _tz
+                manifest_dt = datetime.fromisoformat(manifest_at.replace("Z", "+00:00")) if "T" in manifest_at else datetime.utcnow()
+                for record in records:
+                    if record.updated_at and record.updated_at > manifest_dt.replace(tzinfo=None):
+                        issues.append(("warning", "Derived views may be stale. Run build-site --refresh."))
+                        break
+        except Exception:
+            issues.append(("warning", "Invalid generated_manifest.json"))
 
     for record in records:
         if provider:

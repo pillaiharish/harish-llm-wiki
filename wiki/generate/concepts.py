@@ -196,6 +196,8 @@ class ConceptExtractor:
         """
         concepts_dir = config.get_data_path("processed", "concepts")
         concepts_dir.mkdir(parents=True, exist_ok=True)
+        for old in list(concepts_dir.glob("*.md")) + list(concepts_dir.glob("*.json")):
+            old.unlink()
         
         for slug, concept in self.concepts.items():
             # Save as Markdown
