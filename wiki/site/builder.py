@@ -22,6 +22,7 @@ from wiki.generate.citations import (
     strip_source_chunks_section,
 )
 from wiki.generate.learning_links import resolve_learning_links
+from wiki.generate.page_utils import concept_route, md_table_cell, resource_route
 
 
 class SiteBuilder:
@@ -60,6 +61,14 @@ class SiteBuilder:
 
         # Build topics section
         self._build_topics()
+
+        # Build generated higher-level sections
+        self._copy_generated_section("learn")
+        self._copy_generated_section("review")
+        self._copy_generated_section("revision")
+        self._copy_generated_section("explorer")
+        self._copy_generated_section("sources")
+        self._copy_generated_section("public")
         
         # Build gaps page
         self._build_gaps()
@@ -182,11 +191,11 @@ Do not publish publicly unless content is appropriate for public sharing.
                     resource_path,
                 )
                 
-                link = f"[{title}](./{resource_filename})"
+                link = f"[{md_table_cell(title)}]({resource_route(record.id)})"
             else:
-                link = title
+                link = md_table_cell(title)
             
-            index_lines.append(f"| {link} | {record.source_type.value} | {status} | {date} |")
+            index_lines.append(f"| {link} | {md_table_cell(record.source_type.value)} | {md_table_cell(status)} | {date} |")
         
         index_lines.append("")
         index_content = "\n".join(index_lines)
@@ -230,7 +239,7 @@ Do not publish publicly unless content is appropriate for public sharing.
         if concepts_source.exists():
             for concept_file in sorted(concepts_source.glob("*.md")):
                 name = concept_file.stem.replace("-", " ").title()
-                index_lines.append(f"- [{name}](./{concept_file.name})")
+                index_lines.append(f"- [{name}]({concept_route(concept_file.stem)})")
         else:
             index_lines.append("_No concepts generated yet._")
         
@@ -259,6 +268,8 @@ Do not publish publicly unless content is appropriate for public sharing.
         """Build the topics section."""
         topics_dir = self.data_site_dir / "topics"
         topics_dir.mkdir(exist_ok=True)
+        for old_file in list(topics_dir.glob("*.md")):
+            old_file.unlink()
         topics_source = config.get_data_path("processed", "topics")
         if topics_source.exists():
             for topic_file in topics_source.glob("*.md"):
@@ -277,6 +288,19 @@ Do not publish publicly unless content is appropriate for public sharing.
         
         gaps_path = self.data_site_dir / "gaps.md"
         Storage.write_text(content, gaps_path)
+
+    def _copy_generated_section(self, section: str) -> None:
+        """Copy a generated site section from external data if it exists."""
+        source = config.get_data_path("processed", section)
+        if section in {"explorer", "sources", "public"}:
+            source = self.data_site_dir / section
+        if not source.exists():
+            return
+        dest = self.data_site_dir / section
+        if dest.exists() and dest != source:
+            shutil.rmtree(dest)
+        if source.is_dir() and dest != source:
+            shutil.copytree(source, dest)
     
     def _sync_to_repo_site(self) -> None:
         """Sync generated content to repo site directory."""
@@ -308,13 +332,13 @@ Do not publish publicly unless content is appropriate for public sharing.
             "",
             "| Field | Value |",
             "|---|---|",
-            f"| Type | {record.source_type.value} |",
-            f"| Author/channel | {self._table_value(record.author or 'Unknown')} |",
-            f"| Source URL | {self._table_value(src_url)} |",
-            f"| Processed | {self._table_value(record.status.value)} |",
-            f"| Provider | {self._table_value(record.llm_provider or 'Unknown')} |",
-            f"| Model | {self._table_value(record.llm_model or 'Unknown')} |",
-            f"| Prompt version | {self._table_value(record.prompt_version or 'Unknown')} |",
+            f"| Type | {md_table_cell(record.source_type.value)} |",
+            f"| Author/channel | {md_table_cell(record.author or 'Unknown')} |",
+            f"| Source URL | {md_table_cell(src_url)} |",
+            f"| Processed | {md_table_cell(record.status.value)} |",
+            f"| Provider | {md_table_cell(record.llm_provider or 'Unknown')} |",
+            f"| Model | {md_table_cell(record.llm_model or 'Unknown')} |",
+            f"| Prompt version | {md_table_cell(record.prompt_version or 'Unknown')} |",
         ]
         if record.published_at:
             lines.append(f"| Published/uploaded | {record.published_at.date().isoformat()} |")
@@ -341,9 +365,6 @@ Do not publish publicly unless content is appropriate for public sharing.
             return "\n".join(lines[1:]).lstrip()
         return content
 
-    def _table_value(self, value: str) -> str:
-        """Escape a value for a Markdown table."""
-        return str(value).replace("|", "\\|")
 
     def _yaml_escape(self, value: str) -> str:
         """Escape a string for a simple double-quoted YAML scalar."""

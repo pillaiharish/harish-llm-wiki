@@ -5,6 +5,7 @@ from typing import Optional, List
 from datetime import datetime
 import hashlib
 import json
+import re
 import shutil
 import sys
 import tarfile
@@ -1126,6 +1127,24 @@ def regenerate_views():
     console.print(f"\n[green]✓[/green] Derived views regenerated: {site_path}")
 
 
+@app.command("regenerate-derived")
+def regenerate_derived():
+    """Alias for regenerate-views."""
+    regenerate_views()
+
+
+@app.command("regenerate-revision")
+def regenerate_revision():
+    """Alias for generate-revision."""
+    generate_revision()
+
+
+@app.command("regenerate-notes")
+def regenerate_notes_alias():
+    """Alias for generate-notes."""
+    generate_notes()
+
+
 @app.command("generate-review-pages")
 def generate_review_pages():
     """Generate static review dashboard pages without LLM calls."""
@@ -1297,6 +1316,11 @@ def smoke_site():
             items = data.get("items", [])
             if not items:
                 warnings.append((label, f"Empty items array in {path}"))
+            if label == "Search all.json":
+                for item in items[:50]:
+                    local_page = item.get("local_page", "")
+                    if local_page.endswith(".md"):
+                        errors.append(("Search index", f"local_page ends with .md: {local_page[:100]}"))
         except json.JSONDecodeError as exc:
             errors.append((label, f"Invalid JSON in {path}: {exc}"))
 
@@ -1307,8 +1331,27 @@ def smoke_site():
             errors.append(("Explorer page", "Missing #wiki-explorer div"))
         if "Static table fallback" not in explorer_content:
             errors.append(("Explorer page", "Missing Static table fallback section"))
-        if "try {" not in explorer_content and "try{" not in explorer_content:
-            warnings.append(("Explorer page", "Missing JS error handling (try/catch)"))
+        if "const items = [" in explorer_content:
+            errors.append(("Explorer page", "Contains inline 'const items = [...]' — should use fetch() instead"))
+        if "search/all.json" not in explorer_content:
+            errors.append(("Explorer page", "Does not reference search/all.json for data loading"))
+        static_rows = explorer_content.count("| [")
+        if static_rows < 1 and "| No items" not in explorer_content:
+            warnings.append(("Explorer page", "Static fallback table has no resource rows"))
+        if "Could not load Explorer search index" not in explorer_content:
+            warnings.append(("Explorer page", "Missing fetch error fallback message"))
+
+    # Check resources/index.md for broken links
+    resources_index = site_dir / "resources" / "index.md"
+    if resources_index.exists():
+        ri_content = resources_index.read_text(encoding="utf-8")
+        if ".md)" in ri_content:
+            errors.append(("Resources index", "Contains .md) resource links — should use route paths"))
+        for line in ri_content.splitlines():
+            if line.startswith("|"):
+                unescaped_pipes = len(re.findall(r'(?<!\\)\|', line))
+                if unescaped_pipes > 6:
+                    errors.append(("Resources index", f"Broken table row (too many pipes?): {line[:120]}"))
 
     for label, rel in [
         ("Repo Explorer", Path("explorer") / "index.md"),
@@ -1317,6 +1360,38 @@ def smoke_site():
         path = repo_dir / rel
         if not path.exists():
             warnings.append((label, f"Not synced to repo site: {path}"))
+
+    # Check for duplicate topic display names
+    topics_index = site_dir / "topics" / "index.md"
+    if topics_index.exists():
+        try:
+            topics_content = topics_index.read_text(encoding="utf-8")
+            import re as _re
+            topic_names = _re.findall(r"- \[(.+?)\]", topics_content)
+            seen_names: dict[str, str] = {}
+            for name in topic_names:
+                if name in seen_names:
+                    errors.append(("Topic Map", f"Duplicate topic display name: '{name}' appears more than once"))
+                else:
+                    seen_names[name] = name
+        except Exception as exc:
+            warnings.append(("Topic Map", f"Could not check for duplicate topics: {exc}"))
+
+    # Check for alias topic slugs in search index
+    all_json_path = site_dir / "public" / "search" / "all.json"
+    if all_json_path.exists():
+        try:
+            all_data = json.loads(all_json_path.read_text(encoding="utf-8"))
+            from wiki.resource_utils import TOPIC_ALIASES
+            alias_slugs = set(TOPIC_ALIASES.keys())
+            for item in all_data.get("items", [])[:100]:
+                item_id = item.get("id", "")
+                if item_id.startswith("topic:"):
+                    slug = item_id.replace("topic:", "")
+                    if slug in alias_slugs:
+                        errors.append(("Search index", f"Alias topic slug '{slug}' found in all.json — should be canonical only"))
+        except Exception:
+            pass
 
     # Check generation manifest
     manifest_path = config.get_data_path("processed", "generated_manifest.json")
@@ -1418,6 +1493,38 @@ def validate(
         except Exception as exc:
             issues.append(("warning", f"{label} read error: {exc}"))
 
+    # Check for duplicate topic display names
+    topics_index = site_builder.repo_site_dir / "topics" / "index.md"
+    if topics_index.exists():
+        try:
+            topics_content = topics_index.read_text(encoding="utf-8")
+            import re as _re
+            topic_names = _re.findall(r"- \[(.+?)\]", topics_content)
+            seen_names: dict[str, str] = {}
+            for name in topic_names:
+                if name in seen_names:
+                    issues.append(("error", f"Duplicate topic display name: '{name}' appears more than once in Topic Map"))
+                else:
+                    seen_names[name] = name
+        except Exception as exc:
+            issues.append(("warning", f"Could not check for duplicate topics: {exc}"))
+
+    # Check for alias topic slugs in search index
+    all_json_alias_path = site_builder.repo_site_dir / "public" / "search" / "all.json"
+    if all_json_alias_path.exists():
+        try:
+            all_data = json.loads(all_json_alias_path.read_text(encoding="utf-8"))
+            from wiki.resource_utils import TOPIC_ALIASES
+            alias_slugs = set(TOPIC_ALIASES.keys())
+            for item in all_data.get("items", [])[:100]:
+                item_id = item.get("id", "")
+                if item_id.startswith("topic:"):
+                    slug = item_id.replace("topic:", "")
+                    if slug in alias_slugs:
+                        issues.append(("error", f"Alias topic slug '{slug}' found in all.json — should be canonical only"))
+        except json.JSONDecodeError as exc:
+            issues.append(("warning", f"all.json has invalid JSON: {exc}"))
+
     # Check generation manifest staleness
     manifest_path = config.get_data_path("processed", "generated_manifest.json")
     if not manifest_path.exists():
@@ -1435,6 +1542,50 @@ def validate(
                         break
         except Exception:
             issues.append(("warning", "Invalid generated_manifest.json"))
+
+    # Validate generated site pages for broken tables and .md links
+    resources_index = site_builder.repo_site_dir / "resources" / "index.md"
+    if resources_index.exists():
+        try:
+            ri_content = resources_index.read_text(encoding="utf-8")
+            if ".md)" in ri_content:
+                issues.append(("error", "Resources index contains .md) resource links — should use route paths"))
+            for line_num, line in enumerate(ri_content.splitlines(), start=1):
+                if line.startswith("|"):
+                    unescaped_pipes = len(re.findall(r'(?<!\\)\|', line))
+                    if unescaped_pipes > 6:
+                        issues.append(("warning", f"Resources index line {line_num}: table row has too many unescaped pipes ({unescaped_pipes} cells)"))
+        except Exception as exc:
+            issues.append(("warning", f"Resources index read error: {exc}"))
+
+    explorer_page = site_builder.repo_site_dir / "explorer" / "index.md"
+    if explorer_page.exists():
+        try:
+            ex_content = explorer_page.read_text(encoding="utf-8")
+            if "const items = [" in ex_content:
+                issues.append(("error", "Explorer contains inline 'const items = [...]' — should use fetch() instead"))
+            if "search/all.json" not in ex_content:
+                issues.append(("warning", "Explorer does not reference search/all.json for data loading"))
+            if "Static table fallback" not in ex_content:
+                issues.append(("warning", "Explorer missing static fallback table"))
+        except Exception as exc:
+            issues.append(("warning", f"Explorer page read error: {exc}"))
+
+    all_json_path = site_builder.repo_site_dir / "public" / "search" / "all.json"
+    if all_json_path.exists():
+        try:
+            all_data = json.loads(all_json_path.read_text(encoding="utf-8"))
+            all_items = all_data.get("items", [])
+            if not all_items:
+                issues.append(("warning", "all.json has empty items array"))
+            for item in all_items[:20]:
+                local_page = item.get("local_page", "")
+                if local_page.endswith(".md"):
+                    issues.append(("error", f"all.json local_page ends with .md: {local_page[:80]}"))
+        except json.JSONDecodeError as exc:
+            issues.append(("warning", f"all.json has invalid JSON: {exc}"))
+    else:
+        issues.append(("warning", "Missing all.json — run build-site --refresh"))
 
     for record in records:
         if provider:
