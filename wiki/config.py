@@ -19,6 +19,8 @@ class Config:
     # LLM Provider
     LLM_PROVIDER: str
     LLM_NOTE_REPAIR_RETRIES: int
+    LLM_MAX_OUTPUT_TOKENS: int
+    LLM_TEMPERATURE: float
 
     # Ollama Cloud
     OLLAMA_API_KEY: Optional[str]
@@ -47,6 +49,14 @@ class Config:
             self.LLM_NOTE_REPAIR_RETRIES = int(os.getenv("LLM_NOTE_REPAIR_RETRIES", "1"))
         except ValueError:
             self.LLM_NOTE_REPAIR_RETRIES = 1
+        try:
+            self.LLM_MAX_OUTPUT_TOKENS = int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "6000"))
+        except ValueError:
+            self.LLM_MAX_OUTPUT_TOKENS = 6000
+        try:
+            self.LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))
+        except ValueError:
+            self.LLM_TEMPERATURE = 0.2
 
         # Ollama Cloud
         self.OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY")

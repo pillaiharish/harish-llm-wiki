@@ -120,6 +120,35 @@ def would_regenerate_note(record, *, force: bool = False) -> bool:
     return False
 
 
+def is_note_stale(record, target_provider: str, target_model: str) -> bool:
+    """Return True if a resource's note is stale relative to a target provider and model.
+
+    A note is current only when ALL of:
+    - prompt_version == current PROMPT_VERSION
+    - llm_provider == target_provider
+    - llm_model == target_model (for mock, target_model must be "mock-model")
+    - generated_note_path exists
+    - status != failed_retryable
+
+    A note is stale if ANY of these conditions fail.
+    Additionally, mock-generated notes are always stale for non-mock targets.
+    """
+    if record.status.value == "failed_retryable":
+        return True
+    if not record.generated_note_path or not record.generated_note_path.exists():
+        return True
+    if record.prompt_version != PROMPT_VERSION:
+        return True
+    # Mock-generated notes are stale for any real provider
+    if target_provider != "mock" and record.llm_provider == "mock":
+        return True
+    if record.llm_provider != target_provider:
+        return True
+    if record.llm_model != target_model:
+        return True
+    return False
+
+
 def generate_derived_views(records=None) -> None:
     """Regenerate derived views without calling an LLM."""
     records = list(records or registry.get_all())
@@ -443,47 +472,79 @@ def list_pending():
 
 @app.command()
 def list_stale_notes(
+    provider: Optional[str] = typer.Option(None, "--provider", help="Check staleness relative to this provider (mock, ollama_cloud, ollama_local, openai_compatible)"),
     limit: int = typer.Option(50, "--limit", "-n", help="Maximum number to show"),
 ):
-    """List resources whose generated notes are behind the current prompt version.
-    
-    Use this to see which notes need regeneration before running
-    process-new --only-stale.
+    """List resources whose generated notes need regeneration.
+
+    Without --provider, shows notes with prompt_version != current.
+    With --provider, shows notes that are stale for that provider
+    (e.g., mock-generated notes are stale for ollama_cloud).
+
+    Use this before running:
+      python -m wiki process-new --only-stale --skip-ingest --provider <provider>
     """
     console.print("[bold blue]Stale Notes[/bold blue]\n")
     console.print(f"[dim]Current prompt version: {PROMPT_VERSION}[/dim]\n")
-    
+
     all_records = list(registry.get_all())
-    stale = [r for r in all_records if r.prompt_version != PROMPT_VERSION]
-    current = [r for r in all_records if r.prompt_version == PROMPT_VERSION]
-    
+
+    if provider:
+        # Provider-aware staleness: check if the note needs (re-)generation for this provider
+        target_model = ""
+        if provider == "mock":
+            target_model = "mock-model"
+        elif provider == "ollama_cloud":
+            target_model = config.OLLAMA_CLOUD_MODEL or ""
+        elif provider == "ollama_local":
+            target_model = config.OLLAMA_LOCAL_MODEL
+        elif provider == "openai_compatible":
+            target_model = config.OPENAI_COMPATIBLE_MODEL or ""
+
+        stale = [r for r in all_records if is_note_stale(r, provider, target_model)]
+        current = [r for r in all_records if not is_note_stale(r, provider, target_model)]
+
+        console.print(f"[dim]Checking staleness for provider: {provider}[/dim]")
+        if target_model:
+            console.print(f"[dim]Target model: {target_model}[/dim]")
+        console.print()
+    else:
+        # Simple prompt-version check
+        stale = [r for r in all_records if r.prompt_version != PROMPT_VERSION]
+        current = [r for r in all_records if r.prompt_version == PROMPT_VERSION]
+
     if not stale:
-        console.print("[green]All notes are at current prompt version.[/green]")
+        console.print("[green]All notes are at current version for this provider.[/green]")
         return
-    
+
     table = Table(box=box.SIMPLE)
     table.add_column("ID", style="cyan")
     table.add_column("Type", style="green")
-    table.add_column("Prompt Version", style="yellow")
+    table.add_column("Prompt Ver", style="yellow")
     table.add_column("Provider", style="magenta")
+    table.add_column("Model", style="dim")
     table.add_column("Title", style="white")
-    
+
     for record in stale[:limit]:
-        title = (record.title or "Untitled")[:40]
-        if len(record.title or "") > 40:
+        title = (record.title or "Untitled")[:35]
+        if len(record.title or "") > 35:
             title += "..."
-        
+        pv = record.prompt_version or "none"
+        prov = record.llm_provider or "none"
+        model = record.llm_model or "none"
+
         table.add_row(
-            record.id[:35],
+            record.id[:30],
             record.source_type.value,
-            record.prompt_version or "none",
-            record.llm_provider or "none",
+            pv,
+            prov,
+            model[:20],
             title,
         )
-    
+
     console.print(table)
-    console.print(f"\n{len(stale)} stale note(s) | {len(current)} current | {len(all_records)} total")
-    console.print(f"\n[dim]Run: python -m wiki process-new --only-stale --skip-ingest --provider <provider>[/dim]")
+    console.print(f"\n{len(stale)} stale | {len(current)} current | {len(all_records)} total")
+    console.print(f"\n[dim]Run: python -m wiki process-new --only-stale --skip-ingest --provider {provider or '<provider>'}[/dim]")
 
 
 @app.command()
@@ -628,17 +689,27 @@ def process_new(
             raise typer.Exit(1)
         records = [record]
     elif only_stale:
-        # Select resources whose prompt_version differs from current
-        all_records = list(registry.get_all())
-        records = [
-            r for r in all_records
-            if r.prompt_version != PROMPT_VERSION
-            and r.status not in {ResourceStatus.DUPLICATE_SKIPPED, ResourceStatus.FAILED_PERMANENT}
-        ]
-        if not records:
-            console.print("[dim]No stale notes found. All resources are at current prompt version.[/dim]")
+        # Select resources whose notes are stale for the target provider
+        target_provider_name = config.LLM_PROVIDER
+        target_model = ""
+        if target_provider_name == "mock":
+            target_model = "mock-model"
+        elif target_provider_name == "ollama_cloud":
+            target_model = config.OLLAMA_CLOUD_MODEL or ""
+        elif target_provider_name == "ollama_local":
+            target_model = config.OLLAMA_LOCAL_MODEL
+        elif target_provider_name == "openai_compatible":
+            target_model = config.OPENAI_COMPATIBLE_MODEL or ""
+        all_records_for_stale = list(registry.get_all())
+        stale_records = [r for r in all_records_for_stale if is_note_stale(r, target_provider_name, target_model)]
+        if not stale_records:
+            console.print("[green]All notes are at current version for this provider.[/green]")
+            console.print(f"[dim]Provider: {target_provider_name}, Model: {target_model or 'any'}[/dim]")
             return
-        console.print(f"[dim]--only-stale: found {len(records)} resource(s) with prompt version != {PROMPT_VERSION}[/dim]")
+        records = stale_records
+        console.print(f"[dim]--only-stale: found {len(records)} resource(s) stale for provider={target_provider_name}[/dim]")
+        if target_model:
+            console.print(f"[dim]--only-stale: target model={target_model}[/dim]")
     elif force:
         records = [
             r for r in registry.get_all()

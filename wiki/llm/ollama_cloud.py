@@ -61,6 +61,7 @@ class OllamaCloudProvider(LLMProvider):
             Generated text
         """
         temp = temperature if temperature is not None else self.temperature
+        max_tokens = config.LLM_MAX_OUTPUT_TOKENS
         
         # Build messages
         messages = []
@@ -79,6 +80,7 @@ class OllamaCloudProvider(LLMProvider):
                         "stream": False,
                         "options": {
                             "temperature": temp,
+                            "num_predict": max_tokens,
                         }
                     }
                 )
