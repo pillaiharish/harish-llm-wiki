@@ -128,6 +128,86 @@ def _safe_resource_id(resource_id: str) -> str:
     return resource_id.replace(":", "_").replace("/", "_")
 
 
+def _known_cited_chunk_ids(content: str, chunks: List[Any]) -> list[str]:
+    """Return known chunk IDs cited in generated Markdown."""
+    chunk_ids = [str(chunk.chunk_id) for chunk in chunks]
+    return [chunk_id for chunk_id in chunk_ids if chunk_id in content]
+
+
+def _section_placeholder(section: str, title: str, chunk_ids: list[str], record: ResourceRecord, provider: str, model: str) -> str:
+    """Return deterministic content for a missing required section."""
+    if section == "Needs verification":
+        return "- Generated note did not fully satisfy contract; human review recommended."
+    if section == "Revision questions":
+        return "\n".join([
+            f"1. What are the main ideas in {title}?",
+            f"2. Which source chunks support the most important claims in {title}?",
+            "3. What should Harish verify before relying on this note?",
+        ])
+    if section == "Harish project connections":
+        return "- Requires human review to connect this resource to Harish projects."
+    if section == "Recommended prerequisites":
+        return "- Requires human review."
+    if section == "Suggested next learning topics":
+        return "- Requires human review."
+    if section == "Citations":
+        if not chunk_ids:
+            return "- No source chunks available; requires human review."
+        return "\n".join(f"- [source: {chunk_id}]" for chunk_id in chunk_ids)
+    if section == "Provenance":
+        return "\n".join([
+            f"- Source type: {record.source_type.value}",
+            f"- Source URL: {record.original_url}",
+            f"- LLM provider: {provider}",
+            f"- LLM model: {model}",
+            f"- Prompt version: {PROMPT_VERSION}",
+            f"- Generated at: {datetime.utcnow().isoformat()}",
+            "- Human review required: true",
+        ])
+    if section == "Source-backed summary":
+        if not chunk_ids:
+            return "- Not covered in the generated response. Requires human review."
+        return (
+            "- Generated response did not include a usable source-backed summary; "
+            f"human review required against source chunks. [source: {chunk_ids[0]}]"
+        )
+    return "Not covered in the generated response. Requires human review."
+
+
+def complete_note_contract_deterministically(
+    content: str,
+    record: ResourceRecord,
+    chunks: List[Any],
+    provider: str,
+    model: str,
+) -> str:
+    """Complete missing structural note sections without adding source claims."""
+    title = display_title(record, mark_missing=True)
+    stripped = content.strip()
+    if not stripped:
+        lines = [f"# {title}"]
+    else:
+        lines = stripped.splitlines()
+        first_non_empty = next((index for index, line in enumerate(lines) if line.strip()), 0)
+        if not lines[first_non_empty].strip().startswith("# "):
+            lines.insert(first_non_empty, f"# {title}")
+
+    completed = "\n".join(lines).rstrip()
+    cited_chunk_ids = _known_cited_chunk_ids(completed, chunks)
+    if not cited_chunk_ids:
+        cited_chunk_ids = [str(chunk.chunk_id) for chunk in chunks[:3]]
+
+    for section in REQUIRED_NOTE_SECTIONS:
+        if _has_markdown_heading(completed, section):
+            continue
+        completed += (
+            f"\n\n## {section}\n\n"
+            f"{_section_placeholder(section, title, cited_chunk_ids, record, provider, model)}"
+        )
+
+    return completed.rstrip() + "\n"
+
+
 def validate_generated_note_contract(
     content: str,
     chunks: List[Any],
@@ -344,6 +424,7 @@ class NoteGenerator:
                 print("  ✓ Repaired note passed contract")
                 record.extra["note_repaired"] = True
                 record.extra["repair_attempts"] = attempt
+                record.extra["note_generation_success"] = True
                 record.extra["requires_human_review"] = False
                 record.extra.pop("note_contract_errors", None)
                 record.extra.pop("failed_note_debug_path", None)
@@ -374,14 +455,44 @@ class NoteGenerator:
             },
         )
         print(f"  Debug saved to: {debug_path}")
+        fallback_source = repaired_output or initial_output
+        completed_output = complete_note_contract_deterministically(
+            fallback_source,
+            record,
+            chunks,
+            self.provider.provider_name,
+            self.provider.model,
+        )
+        completed_errors = validate_generated_note_contract(
+            completed_output,
+            chunks,
+            provider=self.provider.provider_name,
+            model=self.provider.model,
+            prompt_version=PROMPT_VERSION,
+        )
+        if not completed_errors:
+            print("  ✓ Deterministic contract completion passed")
+            quality_issues = list(record.extra.get("quality_issues") or [])
+            if "contract_completed_by_deterministic_fallback" not in quality_issues:
+                quality_issues.append("contract_completed_by_deterministic_fallback")
+            record.extra["requires_human_review"] = True
+            record.extra["note_completed_by_fallback"] = True
+            record.extra["note_generation_success"] = True
+            record.extra["quality_status"] = "weak"
+            record.extra["quality_issues"] = quality_issues
+            record.extra.pop("note_contract_errors", None)
+            record.extra.pop("failed_note_debug_path", None)
+            return completed_output
+
         record.status = ResourceStatus.FAILED_RETRYABLE
         record.failure_reason = "Generated note failed contract after repair"
         record.extra["requires_human_review"] = True
+        record.extra["note_generation_success"] = False
         record.extra["note_contract_errors"] = repaired_errors
         record.extra["failed_note_debug_path"] = str(debug_path)
         raise RuntimeError(
             f"Generated note failed contract for {record.id}: "
-            + "; ".join(repaired_errors)
+            + "; ".join(completed_errors or repaired_errors)
         )
 
     def _save_valid_note(
@@ -414,6 +525,10 @@ class NoteGenerator:
             "chunk_count": chunk_count,
             "note_repaired": bool(record.extra.get("note_repaired")),
             "repair_attempts": record.extra.get("repair_attempts", 0),
+            "note_completed_by_fallback": bool(record.extra.get("note_completed_by_fallback")),
+            "requires_human_review": bool(record.extra.get("requires_human_review")),
+            "quality_status": record.extra.get("quality_status"),
+            "quality_issues": record.extra.get("quality_issues", []),
         }
 
         json_path = proc_dir / f"{_safe_resource_id(record.id)}.json"
@@ -428,6 +543,7 @@ class NoteGenerator:
         record.prompt_version = PROMPT_VERSION
         record.status = ResourceStatus.LLM_NOTE_GENERATED
         record.failure_reason = None
+        record.extra["note_generation_success"] = True
 
         return note_path
 

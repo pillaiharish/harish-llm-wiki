@@ -1,11 +1,8 @@
 """Tests for citation resolution, linkification, and source chunk rendering."""
 
-import pytest
-
 from wiki.generate.citations import (
     citation_anchor,
     linkify_citations,
-    load_chunk_map,
     render_source_chunks_section,
     short_citation_label,
     strip_source_chunks_section,
@@ -62,7 +59,21 @@ def test_linkify_citations_converts_tokens_to_links():
 
     assert "[c0001](#youtube-abc123-c0001)" in processed
     assert "[p0004](#webpage-abc-p0004)" in processed
+    assert "<!-- youtube:abc123-c0001 -->" in processed
+    assert "<!-- webpage:abc-p0004 -->" in processed
     assert "youtube:abc123-c0001" in cited
+    assert "webpage:abc-p0004" in cited
+    assert not missing
+
+
+def test_linkify_citations_converts_source_prefixed_tokens():
+    chunk_map = {"webpage:abc-p0004": _web_chunk()}
+    md = "vLLM uses paged attention [source: webpage:abc-p0004]."
+
+    processed, cited, missing = linkify_citations(md, chunk_map)
+
+    assert "[p0004](#webpage-abc-p0004)" in processed
+    assert "<!-- webpage:abc-p0004 -->" in processed
     assert "webpage:abc-p0004" in cited
     assert not missing
 

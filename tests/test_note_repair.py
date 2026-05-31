@@ -6,7 +6,11 @@ from typing import Optional
 import pytest
 
 from wiki.config import config
-from wiki.generate.notes import NoteGenerator
+from wiki.generate.notes import (
+    NoteGenerator,
+    complete_note_contract_deterministically,
+    validate_generated_note_contract,
+)
 from wiki.llm.base import LLMProvider
 from wiki.llm.prompts import PROMPT_VERSION
 from wiki.schemas import ResourceRecord, ResourceStatus, SourceType, WebpageChunk
@@ -36,10 +40,10 @@ class SequenceProvider(LLMProvider):
         return self.responses.pop(0)
 
 
-def _chunk() -> WebpageChunk:
+def _chunk(chunk_id: str = "webpage:test-p001") -> WebpageChunk:
     return WebpageChunk(
         resource_id="webpage:test",
-        chunk_id="webpage:test-p001",
+        chunk_id=chunk_id,
         source_type=SourceType.WEBPAGE,
         text="vLLM uses paged attention to manage KV cache memory.",
         citation_label="section LLM Engine, paragraph 1",
@@ -145,6 +149,20 @@ def _record(tmp_path: Path) -> ResourceRecord:
     )
 
 
+def _record_with_chunks(tmp_path: Path, chunks: list[WebpageChunk]) -> ResourceRecord:
+    norm_dir = tmp_path / "normalized" / "webpage_test_multi"
+    norm_dir.mkdir(parents=True)
+    Storage.write_jsonl((chunk.model_dump() for chunk in chunks), norm_dir / "chunks.jsonl")
+    return ResourceRecord(
+        id="webpage:test",
+        source_type=SourceType.WEBPAGE,
+        canonical_id="webpage:test",
+        original_url="https://example.com/vllm",
+        title="vLLM Note",
+        local_normalized_path=norm_dir,
+    )
+
+
 @pytest.fixture()
 def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "LLM_WIKI_DATA_DIR", tmp_path)
@@ -167,17 +185,39 @@ def test_initial_invalid_note_triggers_repair_and_saves_valid_note(data_dir):
     assert "vLLM uses paged attention" in note_path.read_text()
 
 
-def test_repair_failure_saves_debug_artifacts_and_marks_review(data_dir):
+def test_repair_failure_uses_deterministic_fallback_and_marks_review(data_dir):
     provider = SequenceProvider(["not markdown", "# Still Bad\n\nNo contract."])
     record = _record(data_dir)
+
+    note_path = NoteGenerator(provider).generate(record)
+
+    assert record.status == ResourceStatus.LLM_NOTE_GENERATED
+    assert record.extra["requires_human_review"] is True
+    assert record.extra["note_completed_by_fallback"] is True
+    assert record.extra["note_generation_success"] is True
+    assert record.extra["quality_status"] == "weak"
+    assert "contract_completed_by_deterministic_fallback" in record.extra["quality_issues"]
+    assert "note_contract_errors" not in record.extra
+    assert "failed_note_debug_path" not in record.extra
+    content = note_path.read_text()
+    assert "## Provenance" in content
+    assert "## Source chunks" in content
+    assert "Human review required: true" in content
+
+
+def test_fallback_failure_keeps_failed_retryable(data_dir, monkeypatch):
+    provider = SequenceProvider(["not markdown", "# Still Bad\n\nNo contract."])
+    record = _record(data_dir)
+
+    monkeypatch.setattr("wiki.generate.notes.complete_note_contract_deterministically", lambda *args, **kwargs: "# bad")
 
     with pytest.raises(RuntimeError, match="Generated note failed contract"):
         NoteGenerator(provider).generate(record)
 
     assert record.status == ResourceStatus.FAILED_RETRYABLE
     assert record.extra["requires_human_review"] is True
+    assert record.extra["note_generation_success"] is False
     assert record.extra["note_contract_errors"]
-
     debug_path = Path(record.extra["failed_note_debug_path"])
     assert (debug_path / "initial_output.md").exists()
     assert (debug_path / "repaired_output.md").exists()
@@ -185,3 +225,72 @@ def test_repair_failure_saves_debug_artifacts_and_marks_review(data_dir):
     prompt_context = Storage.read_json(debug_path / "prompt_context.json")
     assert prompt_context["chunks"][0]["chunk_id"] == "webpage:test-p001"
     assert "CHUNK ID: webpage:test-p001" in prompt_context["chunks_prompt"]
+
+
+def test_deterministic_completion_adds_missing_provenance(data_dir):
+    record = _record(data_dir)
+    chunks = [_chunk()]
+    content = _valid_note().replace("## Provenance", "## Removed")
+
+    completed = complete_note_contract_deterministically(content, record, chunks, "sequence", "sequence-model")
+
+    assert "## Provenance" in completed
+    assert "- LLM provider: sequence" in completed
+    assert "- LLM model: sequence-model" in completed
+    assert f"- Prompt version: {PROMPT_VERSION}" in completed
+    assert validate_generated_note_contract(
+        completed,
+        chunks,
+        provider="sequence",
+        model="sequence-model",
+        prompt_version=PROMPT_VERSION,
+    ) == []
+
+
+def test_deterministic_completion_citations_use_existing_known_ids(data_dir):
+    record = _record(data_dir)
+    chunks = [_chunk(), _chunk("webpage:test-p002")]
+    content = _valid_note().replace("## Citations", "## Removed")
+
+    completed = complete_note_contract_deterministically(content, record, chunks, "sequence", "sequence-model")
+
+    citations = completed.split("## Citations", 1)[1].split("## Provenance", 1)[0]
+    assert "[source: webpage:test-p001]" in citations
+    assert "[source: webpage:test-p002]" not in citations
+
+
+def test_deterministic_completion_citations_use_first_three_when_none_cited(data_dir):
+    record = _record_with_chunks(data_dir, [_chunk("webpage:test-p001"), _chunk("webpage:test-p002"), _chunk("webpage:test-p003"), _chunk("webpage:test-p004")])
+    chunks = list(Storage.read_jsonl(Path(record.local_normalized_path) / "chunks.jsonl"))
+    parsed_chunks = [WebpageChunk.model_validate(chunk) for chunk in chunks]
+    content = "# vLLM Note\n"
+
+    completed = complete_note_contract_deterministically(content, record, parsed_chunks, "sequence", "sequence-model")
+
+    citations = completed.split("## Citations", 1)[1].split("## Provenance", 1)[0]
+    assert "[source: webpage:test-p001]" in citations
+    assert "[source: webpage:test-p002]" in citations
+    assert "[source: webpage:test-p003]" in citations
+    assert "[source: webpage:test-p004]" not in citations
+
+
+def test_deterministic_completion_adds_prereq_and_next_placeholders(data_dir):
+    record = _record(data_dir)
+    chunks = [_chunk()]
+    completed = complete_note_contract_deterministically("# vLLM Note", record, chunks, "sequence", "sequence-model")
+
+    prerequisites = completed.split("## Recommended prerequisites", 1)[1].split("## Suggested next learning topics", 1)[0]
+    next_topics = completed.split("## Suggested next learning topics", 1)[1].split("## Citations", 1)[0]
+    assert "- Requires human review." in prerequisites
+    assert "- Requires human review." in next_topics
+
+
+def test_deterministic_completion_does_not_overwrite_existing_content(data_dir):
+    record = _record(data_dir)
+    chunks = [_chunk()]
+    original = _valid_note()
+
+    completed = complete_note_contract_deterministically(original, record, chunks, "sequence", "sequence-model")
+
+    assert "Paged attention makes KV cache memory manageable." in completed
+    assert completed.count("## One-line memory hook") == 1

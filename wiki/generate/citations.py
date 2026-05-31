@@ -5,13 +5,13 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Iterator
 
 from wiki.resource_utils import anchor_slug, short_citation_label
-from wiki.schemas import YouTubeChunk, WebpageChunk, MarkdownChunk, SourceChunk, SourceType
+from wiki.schemas import YouTubeChunk, WebpageChunk, MarkdownChunk, SourceChunk
 
 
-CITATION_PATTERN = re.compile(r"\[([a-z]+:[a-zA-Z0-9_-]+-[a-z]\d{4})\]")
+CITATION_PATTERN = re.compile(r"\[(?:source:\s*)?([a-z]+:[a-zA-Z0-9_-]+-[a-z]\d{3,4})\]")
 
 FENCED_CODE_RE = re.compile(r"```[\s\S]*?```", re.DOTALL)
 
@@ -81,7 +81,7 @@ def linkify_citations(markdown: str, chunk_map: dict[str, SourceChunk]) -> tuple
         if chunk_id in chunk_map:
             anchor = citation_anchor(chunk_id)
             label = short_citation_label(chunk_id)
-            result_parts.append(f"[{label}](#{anchor})")
+            result_parts.append(f"[{label}](#{anchor})<!-- {chunk_id} -->")
             cited_ids.add(chunk_id)
         else:
             result_parts.append(f"[missing source chunk: {chunk_id}]")
