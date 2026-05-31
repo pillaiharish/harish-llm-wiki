@@ -1,12 +1,12 @@
 """Generate tags page from resources."""
 
-import json
 from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
 from typing import Dict, List
 
 from wiki.config import config
+from wiki.resource_utils import dedupe_records, display_title, learned_date
 from wiki.schemas import ResourceRecord
 from wiki.storage import Storage
 
@@ -21,13 +21,13 @@ class TagsGenerator:
         """
         tags: Dict[str, List[dict]] = defaultdict(list)
         
-        for record in records:
+        for record in dedupe_records(records):
             for tag in record.tags:
                 tags[tag].append({
                     "id": record.id,
-                    "title": record.title or "Untitled",
+                    "title": display_title(record, mark_missing=True),
                     "type": record.source_type.value,
-                    "date": record.user_consumed_at.isoformat() if record.user_consumed_at else None,
+                    "date": learned_date(record).isoformat(),
                 })
         
         return dict(tags)

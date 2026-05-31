@@ -18,6 +18,7 @@ class Config:
 
     # LLM Provider
     LLM_PROVIDER: str
+    LLM_NOTE_REPAIR_RETRIES: int
 
     # Ollama Cloud
     OLLAMA_API_KEY: Optional[str]
@@ -42,6 +43,10 @@ class Config:
 
         # LLM Provider
         self.LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama_cloud")
+        try:
+            self.LLM_NOTE_REPAIR_RETRIES = int(os.getenv("LLM_NOTE_REPAIR_RETRIES", "1"))
+        except ValueError:
+            self.LLM_NOTE_REPAIR_RETRIES = 1
 
         # Ollama Cloud
         self.OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY")

@@ -26,7 +26,7 @@ def test_resource_page_includes_metadata_header(tmp_path):
         generated_note_path=note_path,
         llm_provider="mock",
         llm_model="mock-model",
-        prompt_version="harish_llm_wiki_v2",
+        prompt_version="harish_llm_wiki_v3",
     )
 
     builder = SiteBuilder()
@@ -43,6 +43,8 @@ def test_resource_page_includes_metadata_header(tmp_path):
 
     assert "| Author/channel | Example Author |" in content
     assert "| Source URL | https://example.com/canonical-post |" in content
-    assert "| Prompt version | harish_llm_wiki_v2 |" in content
+    assert "## Resource metadata" in content
+    assert "## Resource table of contents" in content
+    assert "| Prompt version | harish_llm_wiki_v3 |" in content
     assert content.count("# Real Article") == 1
     assert "# Generated Title" not in content

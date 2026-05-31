@@ -46,7 +46,7 @@ class MockProvider(LLMProvider):
         """Extract real chunk IDs from the prompt."""
         chunk_ids: list[str] = []
         for line in prompt.splitlines():
-            if line.startswith("### Chunk ID:"):
+            if line.startswith("CHUNK ID:") or line.startswith("### Chunk ID:"):
                 chunk_id = line.split(":", 1)[1].strip()
                 if chunk_id:
                     chunk_ids.append(chunk_id)
@@ -69,11 +69,17 @@ class MockProvider(LLMProvider):
         """Generate deterministic mock learning note."""
         # Generate mock citations
         citations = "\n".join(
-            f"- Mock point from source chunk. Citation: [{chunk_id}]"
+            f"- Mock point from source chunk. Citation: [source: {chunk_id}]"
             for chunk_id in chunk_ids[:5]
         )
         
         return f"""# {title}
+
+## Resource table of contents
+
+- [00:00] Introduction [{chunk_ids[0]}]
+- [03:00] Core mechanism [{chunk_ids[min(1, len(chunk_ids) - 1)]}]
+- [08:00] Practical implications [{chunk_ids[min(2, len(chunk_ids) - 1)]}]
 
 ## Why this resource matters
 
@@ -111,7 +117,7 @@ YouTube video 6 months ago. Without proper notes and citations, you'd have to
 rewatch the entire video. With this wiki system, you can find the exact timestamp 
 in seconds.
 
-### Technical explanation
+### Mechanics
 
 The pipeline works in several stages:
 1. **Ingestion** - Fetch raw content from sources
@@ -119,18 +125,26 @@ The pipeline works in several stages:
 3. **Generation** - LLM creates structured learning notes
 4. **Aggregation** - Build concept maps and timelines
 
-### Why it matters
+## Concrete example / toy implementation
+
+```python
+def retrieve_then_answer(query: str, chunks: list[str]) -> str:
+    relevant = search(query, chunks)
+    return generate_answer(query, context=relevant)
+```
+
+## Real-system implications
 
 In the age of information overload, **retrieval** is more valuable than 
 **consumption**. This system optimizes for recall and revision.
 
-### Common mistakes
+## Common failure modes
 
 - Not citing source chunks properly
 - Mixing source-backed claims with LLM-added explanations
 - Skipping the review step before publishing
 
-### How to use in projects
+## Harish project connections
 
 Apply this same pipeline to:
 - Technical documentation
@@ -138,31 +152,7 @@ Apply this same pipeline to:
 - Conference talk summaries
 - Online course notes
 
-## Source-backed notes
-
-{citations}
-
-## Timeline of ideas
-
-The resource teaches concepts in this order:
-1. Introduction and motivation (00:00 - 02:00)
-2. Core principles explained (02:00 - 10:00)
-3. Implementation examples (10:00 - 20:00)
-4. Common pitfalls and edge cases (20:00 - 25:00)
-5. Summary and next steps (25:00 - 30:00)
-
-## Examples
-
-```python
-# Mock example code
-def process_resource(url: str) -> Note:
-    \"\"\"Process a learning resource.\"\"\"
-    chunks = ingest_and_normalize(url)
-    note = generate_learning_note(chunks)
-    return note
-```
-
-## Missing pieces from the resource
+## What the resource did not cover
 
 - Detailed performance benchmarks
 - Comparison with alternative approaches
@@ -187,13 +177,18 @@ sources before relying on them for critical decisions.
 
 - Mock notes are placeholders and should be replaced with real source-specific notes before serious use.
 
-## Related concepts
+## Recommended prerequisites
 
-- test-concept
-- mock-pipeline
-- citation-tracking
-- knowledge-management
-- llm-assisted-learning
+- Python basics
+- LLM inference fundamentals
+- GPU memory basics
+
+## Suggested next learning topics
+
+- Embeddings
+- Vector databases
+- Production deployment
+- Quantization
 
 ## Revision questions
 
@@ -202,13 +197,6 @@ sources before relying on them for critical decisions.
 3. What needs human review in this generated note?
 4. How would you apply this to your own projects?
 5. What are the common pitfalls mentioned?
-
-## Harish project connection
-
-This resource connects to several active projects:
-- **RAG over ClickHouse**: Using similar chunking strategies
-- **Document search system**: Implementing provenance tracking
-- **Local LLM pipelines**: Testing with mock providers before cloud deployment
 
 ## Citations
 

@@ -2,9 +2,7 @@
 
 import os
 import tempfile
-import shutil
 from pathlib import Path
-from datetime import datetime
 
 import pytest
 
@@ -15,9 +13,8 @@ os.environ["LLM_WIKI_DATA_DIR"] = tempfile.mkdtemp(prefix="test_wiki_data_")
 from wiki.config import config
 from wiki.registry import Registry
 from wiki.dedupe import deduplicator
-from wiki.schemas import ResourceRecord, ResourceStatus
+from wiki.schemas import ResourceStatus
 from wiki.llm.mock import MockProvider
-from wiki.generate.notes import NoteGenerator
 
 
 class TestDryRun:
@@ -68,7 +65,7 @@ class TestDeduplication:
         # Check if exists (might from previous test)
         existing = registry.get_by_canonical_id(identity1.canonical_id)
         if not existing:
-            record1 = registry.insert(identity1, status=ResourceStatus.NEW)
+            registry.insert(identity1, status=ResourceStatus.NEW)
         
         # Try to add same video again
         identity2 = deduplicator.canonicalize(url1)
@@ -131,7 +128,7 @@ class TestMockProvider:
         
         # Should contain expected sections
         for content in [content1, content2]:
-            assert "# Mock" in content or "## Source-backed notes" in content
+            assert "# Untitled Resource" in content or "## Source-backed summary" in content
             assert "## LLM-added explanations" in content
             assert "## Citations" in content
             assert "## Provenance" in content
@@ -142,9 +139,13 @@ class TestMockProvider:
         content = provider.generate("Test")
         
         required_sections = [
-            "## Source-backed notes",
+            "## Resource table of contents",
+            "## Source-backed summary",
+            "## First-principles explanation",
+            "## Concrete example / toy implementation",
+            "## Real-system implications",
+            "## Common failure modes",
             "## LLM-added explanations",
-            "## Related concepts",
             "## Revision questions",
             "## Citations",
             "## Provenance",

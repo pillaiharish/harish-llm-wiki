@@ -7,10 +7,24 @@ from pathlib import Path
 from typing import List, Iterator, Any
 
 from wiki.config import config
+from wiki.resource_utils import display_title, resource_toc
 from wiki.schemas import ResourceRecord, ResourceStatus, YouTubeChunk, WebpageChunk, MarkdownChunk
 from wiki.storage import Storage
 from wiki.llm.base import LLMProvider
-from wiki.llm.prompts import build_resource_note_prompt, SYSTEM_PROMPT, PROMPT_VERSION
+from wiki.llm.prompts import (
+    build_note_repair_prompt,
+    build_resource_note_prompt,
+    format_chunks_for_prompt,
+    SYSTEM_PROMPT,
+    PROMPT_VERSION,
+)
+from wiki.generate.citations import (
+    load_chunk_map,
+    linkify_citations,
+    render_source_chunks_section,
+    strip_source_chunks_section,
+)
+from wiki.generate.learning_links import resolve_learning_links
 
 
 def load_chunks(norm_dir: Path) -> Iterator[YouTubeChunk | WebpageChunk | MarkdownChunk]:
@@ -43,20 +57,21 @@ def compute_chunks_hash(chunks: List[Any]) -> str:
 
 
 REQUIRED_NOTE_SECTIONS = [
+    "Resource table of contents",
     "Why this resource matters",
     "One-line memory hook",
     "Source-backed summary",
-    "What this resource covers",
     "First-principles explanation",
-    "Source-backed notes",
-    "Timeline of ideas",
-    "Examples",
-    "Missing pieces from the resource",
+    "Concrete example / toy implementation",
+    "Real-system implications",
+    "Common failure modes",
+    "What the resource did not cover",
     "LLM-added explanations",
     "Needs verification",
-    "Related concepts",
     "Revision questions",
-    "Harish project connection",
+    "Harish project connections",
+    "Recommended prerequisites",
+    "Suggested next learning topics",
     "Citations",
     "Provenance",
 ]
@@ -108,6 +123,11 @@ def _extract_section(content: str, heading: str) -> str:
     return "\n".join(lines[start:end]).strip()
 
 
+def _safe_resource_id(resource_id: str) -> str:
+    """Return a filesystem-safe resource id."""
+    return resource_id.replace(":", "_").replace("/", "_")
+
+
 def validate_generated_note_contract(
     content: str,
     chunks: List[Any],
@@ -127,10 +147,24 @@ def validate_generated_note_contract(
             issues.append(f"missing section: {section}")
 
     chunk_ids = [str(chunk.chunk_id) for chunk in chunks]
-    for section in ["Source-backed summary", "Source-backed notes", "Citations"]:
+    for section in ["Source-backed summary", "Citations"]:
         body = _extract_section(content, section)
         if body and chunk_ids and not any(chunk_id in body for chunk_id in chunk_ids):
             issues.append(f"{section} must cite source chunk IDs")
+
+    summary_body = _extract_section(content, "Source-backed summary")
+    for line in summary_body.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith(("-", "*")):
+            continue
+        if chunk_ids and not any(chunk_id in stripped for chunk_id in chunk_ids):
+            issues.append("every Source-backed summary bullet must cite a source chunk ID")
+            break
+
+    summary = _extract_section(content, "Source-backed summary").lower()
+    generic_phrases = ["learned about this topic", "core concepts from the source material"]
+    if any(phrase in summary for phrase in generic_phrases):
+        issues.append("Source-backed summary is too generic")
 
     provenance = _extract_section(content, "Provenance")
     provenance_lower = provenance.lower()
@@ -207,9 +241,12 @@ class NoteGenerator:
         # Build metadata for prompt
         metadata = {
             "source_type": record.source_type.value,
-            "title": record.title or "Unknown",
+            "title": display_title(record, mark_missing=True),
             "author": record.author or "Unknown",
             "url": record.original_url,
+            "subtitle": record.extra.get("subtitle"),
+            "published_at": record.published_at.isoformat() if record.published_at else None,
+            "toc": resource_toc(record),
             "chunk_count": len(chunks),
         }
         
@@ -225,6 +262,8 @@ class NoteGenerator:
         
         # Generate note
         print(f"  Generating note for {record.id}...")
+        record.extra.pop("note_repaired", None)
+        record.extra.pop("repair_attempts", None)
         content = self.provider.generate(prompt, system=SYSTEM_PROMPT)
         
         if not content:
@@ -238,24 +277,131 @@ class NoteGenerator:
             prompt_version=PROMPT_VERSION,
         )
         if contract_issues:
-            raise RuntimeError(
-                f"Generated note failed contract for {record.id}: "
-                + "; ".join(contract_issues)
+            content = self._repair_or_fail(
+                record=record,
+                metadata=metadata,
+                chunks=chunks,
+                initial_output=content,
+                initial_errors=contract_issues,
+                prompt_hash=prompt_hash,
             )
-        
-        # Compute output hash
+
+        # Post-processing: linkify citations, resolve learning links
+        norm_dir = Path(record.local_normalized_path)
+        chunk_map = load_chunk_map(norm_dir)
+        content, cited_ids, _missing = linkify_citations(content, chunk_map)
+        content = resolve_learning_links(content)
+        content = strip_source_chunks_section(content)
+        source_url = record.original_url or ""
+        content += render_source_chunks_section(chunk_map, cited_ids, source_url=source_url)
+
+        note_path = self._save_valid_note(
+            record=record,
+            content=content,
+            prompt_hash=prompt_hash,
+            chunks_hash=chunks_hash,
+            chunk_count=len(chunks),
+        )
+        return note_path
+
+    def _repair_or_fail(
+        self,
+        *,
+        record: ResourceRecord,
+        metadata: dict[str, Any],
+        chunks: List[Any],
+        initial_output: str,
+        initial_errors: list[str],
+        prompt_hash: str,
+    ) -> str:
+        """Try to repair invalid note output or save debug artifacts."""
+        print("  ✗ Initial note failed contract")
+        repair_attempts = max(0, config.LLM_NOTE_REPAIR_RETRIES)
+        repaired_output = ""
+        repaired_errors = initial_errors
+
+        for attempt in range(1, repair_attempts + 1):
+            print(f"  ↻ Attempting repair {attempt}/{repair_attempts}")
+            repair_prompt = build_note_repair_prompt(
+                resource_title=metadata["title"],
+                chunks=chunks,
+                validator_errors=repaired_errors,
+                invalid_output=repaired_output or initial_output,
+            )
+            repaired_output = self.provider.generate(repair_prompt, system=SYSTEM_PROMPT)
+            if not repaired_output:
+                repaired_errors = ["empty repaired response from LLM"]
+                continue
+
+            repaired_errors = validate_generated_note_contract(
+                repaired_output,
+                chunks,
+                provider=self.provider.provider_name,
+                model=self.provider.model,
+                prompt_version=PROMPT_VERSION,
+            )
+            if not repaired_errors:
+                print("  ✓ Repaired note passed contract")
+                record.extra["note_repaired"] = True
+                record.extra["repair_attempts"] = attempt
+                record.extra["requires_human_review"] = False
+                record.extra.pop("note_contract_errors", None)
+                record.extra.pop("failed_note_debug_path", None)
+                return repaired_output
+
+        print("  ✗ Repair failed")
+        debug_path = self._save_failed_debug(
+            record=record,
+            initial_output=initial_output,
+            repaired_output=repaired_output,
+            validator_errors=repaired_errors,
+            prompt_context={
+                "resource_id": record.id,
+                "metadata": metadata,
+                "prompt_hash": prompt_hash,
+                "prompt_version": PROMPT_VERSION,
+                "llm_provider": self.provider.provider_name,
+                "llm_model": self.provider.model,
+                "chunks": [
+                    {
+                        "chunk_id": str(chunk.chunk_id),
+                        "citation_label": getattr(chunk, "citation_label_formatted", None) or chunk.citation_label,
+                        "source_type": chunk.source_type.value,
+                    }
+                    for chunk in chunks
+                ],
+                "chunks_prompt": format_chunks_for_prompt(chunks),
+            },
+        )
+        print(f"  Debug saved to: {debug_path}")
+        record.status = ResourceStatus.FAILED_RETRYABLE
+        record.failure_reason = "Generated note failed contract after repair"
+        record.extra["requires_human_review"] = True
+        record.extra["note_contract_errors"] = repaired_errors
+        record.extra["failed_note_debug_path"] = str(debug_path)
+        raise RuntimeError(
+            f"Generated note failed contract for {record.id}: "
+            + "; ".join(repaired_errors)
+        )
+
+    def _save_valid_note(
+        self,
+        *,
+        record: ResourceRecord,
+        content: str,
+        prompt_hash: str,
+        chunks_hash: str,
+        chunk_count: int,
+    ) -> Path:
+        """Save a validated note and update record metadata."""
         output_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
-        
-        # Create processed directory
+
         proc_dir = config.get_data_path("processed", "resources")
         proc_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Save note as Markdown
-        note_filename = f"{record.id.replace(':', '_')}.md"
-        note_path = proc_dir / note_filename
+
+        note_path = proc_dir / f"{_safe_resource_id(record.id)}.md"
         Storage.write_text(content, note_path)
-        
-        # Save metadata as JSON
+
         note_data = {
             "resource_id": record.id,
             "generated_at": datetime.utcnow().isoformat(),
@@ -265,13 +411,14 @@ class NoteGenerator:
             "prompt_hash": prompt_hash,
             "source_chunks_hash": chunks_hash,
             "generated_output_hash": output_hash,
-            "chunk_count": len(chunks),
+            "chunk_count": chunk_count,
+            "note_repaired": bool(record.extra.get("note_repaired")),
+            "repair_attempts": record.extra.get("repair_attempts", 0),
         }
-        
-        json_path = proc_dir / f"{record.id.replace(':', '_')}.json"
+
+        json_path = proc_dir / f"{_safe_resource_id(record.id)}.json"
         Storage.write_json(note_data, json_path)
-        
-        # Update record
+
         record.generated_note_path = note_path
         record.prompt_hash = prompt_hash
         record.source_chunks_hash = chunks_hash
@@ -280,8 +427,27 @@ class NoteGenerator:
         record.llm_model = self.provider.model
         record.prompt_version = PROMPT_VERSION
         record.status = ResourceStatus.LLM_NOTE_GENERATED
-        
+        record.failure_reason = None
+
         return note_path
+
+    def _save_failed_debug(
+        self,
+        *,
+        record: ResourceRecord,
+        initial_output: str,
+        repaired_output: str,
+        validator_errors: list[str],
+        prompt_context: dict[str, Any],
+    ) -> Path:
+        """Save failed LLM outputs outside Git for human debugging."""
+        debug_dir = config.get_data_path("debug", "failed_notes", _safe_resource_id(record.id))
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        Storage.write_text(initial_output, debug_dir / "initial_output.md")
+        Storage.write_text(repaired_output, debug_dir / "repaired_output.md")
+        Storage.write_json({"errors": validator_errors}, debug_dir / "validator_errors.json")
+        Storage.write_json(prompt_context, debug_dir / "prompt_context.json")
+        return debug_dir
 
 
 # Global instance (initialized with provider when needed)

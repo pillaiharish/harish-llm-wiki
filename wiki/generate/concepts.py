@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from wiki.config import config
+from wiki.resource_utils import display_title
 from wiki.schemas import Concept, ConceptResourceRef, ResourceRecord
 from wiki.storage import Storage
 
@@ -81,7 +82,7 @@ class ConceptExtractor:
                     resources=[
                         ConceptResourceRef(
                             resource_id=record.id,
-                            resource_title=record.title or "Unknown",
+                            resource_title=display_title(record, mark_missing=True),
                             coverage_quality="needs_review",
                             learned_at=record.processed_at or datetime.utcnow()
                         )

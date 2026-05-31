@@ -5,6 +5,7 @@ YouTube videos using yt-dlp and for webpages using OpenGraph/meta tags.
 """
 
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -18,7 +19,16 @@ logger = logging.getLogger(__name__)
 
 def _is_missing_text(value: Optional[str]) -> bool:
     """Return True for empty placeholder metadata values."""
-    return value is None or not str(value).strip() or str(value).strip().lower() == "untitled"
+    return value is None or not str(value).strip() or str(value).strip().lower() in {
+        "untitled",
+        "unknown resource",
+    }
+
+
+def _looks_like_html(html: str) -> bool:
+    """Return True when text looks like decoded HTML rather than compressed bytes."""
+    sample = html.strip().lower()[:1000]
+    return sample.startswith("<!doctype") or sample.startswith("<html") or "<head" in sample
 
 
 class YouTubeMetadataEnricher:
@@ -128,6 +138,7 @@ class YouTubeMetadataEnricher:
             "upload_date": info.get('upload_date'),
             "duration": info.get('duration'),
             "thumbnail": info.get('thumbnail'),
+            "chapters": info.get('chapters') or [],
             "description": description,
             "language": info.get('language'),
             "entry_count": record.extra.get('entry_count'),
@@ -176,7 +187,7 @@ class YouTubeMetadataEnricher:
             record.description = metadata['description']
         
         # Store extra fields
-        for key in ['duration', 'thumbnail', 'channel_url', 'video_length']:
+        for key in ['duration', 'thumbnail', 'channel_url', 'video_length', 'chapters']:
             if key in metadata and metadata[key] is not None:
                 record.extra[key] = metadata[key]
         
@@ -234,8 +245,7 @@ class WebpageMetadataEnricher:
             html = Storage.read_text(html_path)
             # Check if it's actually parseable HTML
             # A real HTML file starts with <!DOCTYPE or <html or <HTML
-            html_lower = html.strip().lower()[:500]
-            if html_lower.startswith('<!doctype') or html_lower.startswith('<html') or '<head' in html_lower:
+            if _looks_like_html(html):
                 pass  # Looks like valid HTML
             else:
                 logger.warning(f"Local HTML for {record.id} appears binary/compressed, re-fetching...")
@@ -249,9 +259,20 @@ class WebpageMetadataEnricher:
                 from wiki.ingest.webpage import WebpageIngestor
                 ingestor = WebpageIngestor()
                 fetched_html, status_code = ingestor.fetch(record.original_url)
+                if not _looks_like_html(fetched_html):
+                    html_path.unlink(missing_ok=True)
+                    extracted_md_path = raw_dir / "extracted.md"
+                    extracted_md_path.unlink(missing_ok=True)
+                    raise RuntimeError("Fetched content does not look like decoded HTML")
                 html = fetched_html
                 # Save the re-fetched HTML
                 Storage.write_text(html, html_path)
+                extraction = ingestor.extract(html, record.original_url)
+                extracted_md_path = raw_dir / "extracted.md"
+                if extraction.get("content"):
+                    Storage.write_text(extraction["content"], extracted_md_path)
+                else:
+                    extracted_md_path.unlink(missing_ok=True)
                 logger.info(f"Re-fetched webpage for {record.id} (status: {status_code})")
             except Exception as e:
                 logger.error(f"Failed to re-fetch webpage for {record.id}: {e}")
@@ -261,6 +282,12 @@ class WebpageMetadataEnricher:
         
         # Extract metadata
         metadata = self._extract_metadata(html, record.original_url)
+        extracted_md_path = raw_dir / "extracted.md"
+        if extracted_md_path.exists():
+            extracted = Storage.read_text(extracted_md_path)
+            md_title, md_toc = self._extract_markdown_metadata(extracted)
+            metadata["title"] = metadata.get("title") or md_title
+            metadata["toc"] = metadata.get("toc") or md_toc
         
         # Merge with existing metadata
         if metadata_path.exists():
@@ -322,7 +349,12 @@ class WebpageMetadataEnricher:
         }
         
         # OpenGraph article:published_time
-        published_time = self._get_meta_content(soup, 'article:published_time')
+        published_time = (
+            self._get_meta_content(soup, 'article:published_time')
+            or self._get_meta_content(soup, 'date', attr='name')
+            or self._get_meta_content(soup, 'publish_date', attr='name')
+            or self._get_meta_content(soup, 'datePublished', attr='name')
+        )
         if published_time:
             published = published_time
         
@@ -364,6 +396,11 @@ class WebpageMetadataEnricher:
         h1 = soup.find('h1')
         if h1:
             h1_title = h1.get_text(strip=True)
+
+        subtitle = self._extract_subtitle(soup, h1)
+        toc = self._extract_toc(soup)
+        if not published:
+            published = self._extract_date_from_text(soup.get_text(" ", strip=True))
         
         # Priority: OpenGraph > Twitter > HTML meta > h1
         title = og_tags.get('title') or twitter_title or html_title or h1_title
@@ -382,16 +419,74 @@ class WebpageMetadataEnricher:
         
         return {
             'title': title,
+            'subtitle': subtitle,
             'author': author,
             'description': description,
             'published': published,
+            'published_at': published,
             'image': image,
             'site_name': site_name,
             'domain': domain,
             'canonical_url': self._canonical_url(soup, url),
+            'source_url': url,
+            'source_type': 'webpage',
+            'toc': toc,
             'og_type': og_tags.get('type'),
             'url': url,
         }
+
+    def _extract_subtitle(self, soup, h1) -> Optional[str]:
+        """Extract a subtitle from the first h2 after h1 or document body."""
+        if h1:
+            for sibling in h1.find_all_next(["h2", "p"], limit=4):
+                text = sibling.get_text(" ", strip=True)
+                if text:
+                    return text
+        h2 = soup.find("h2")
+        return h2.get_text(" ", strip=True) if h2 else None
+
+    def _extract_toc(self, soup) -> list[dict[str, Any]]:
+        """Extract h1/h2/h3 headings as a table of contents."""
+        toc: list[dict[str, Any]] = []
+        seen: set[tuple[int, str]] = set()
+        for heading in soup.find_all(["h1", "h2", "h3"]):
+            text = heading.get_text(" ", strip=True)
+            if not text:
+                continue
+            level = int(heading.name[1])
+            key = (level, text)
+            if key in seen:
+                continue
+            seen.add(key)
+            toc.append({"level": level, "title": text})
+        return toc
+
+    def _extract_date_from_text(self, text: str) -> Optional[str]:
+        """Extract a common human-readable article date from text."""
+        patterns = [
+            r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s+\d{4}\b",
+            r"\b\d{4}-\d{2}-\d{2}\b",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                return match.group(0)
+        return None
+
+    def _extract_markdown_metadata(self, content: str) -> tuple[Optional[str], list[dict[str, Any]]]:
+        """Extract title and TOC from extracted Markdown."""
+        toc: list[dict[str, Any]] = []
+        title = None
+        for line in content.splitlines():
+            match = re.match(r"^(#{1,3})\s+(.+?)\s*$", line.strip())
+            if not match:
+                continue
+            level = len(match.group(1))
+            heading = match.group(2).strip()
+            if title is None and level == 1:
+                title = heading
+            toc.append({"level": level, "title": heading})
+        return title, toc
     
     def _get_meta_content(self, soup, property_name: str, attr: str = 'property') -> Optional[str]:
         """Get content from a meta tag by property or name attribute."""
@@ -421,31 +516,45 @@ class WebpageMetadataEnricher:
             record.title = metadata['title']
         if metadata.get('author') and _is_missing_text(record.author):
             record.author = metadata['author']
-        if metadata.get('published') and not record.published_at:
-            if isinstance(metadata['published'], str):
+        published_value = metadata.get('published_at') or metadata.get('published')
+        if published_value and not record.published_at:
+            if isinstance(published_value, str):
                 try:
                     # Try multiple date formats
-                    clean_date = metadata['published'].replace('Z', '+00:00')
+                    clean_date = published_value.replace('Z', '+00:00')
                     try:
                         record.published_at = datetime.fromisoformat(clean_date)
                     except ValueError:
                         pass
-                    for fmt in ['%Y-%m-%d', '%Y%m%d', '%Y-%m-%dT%H:%M:%S', '%a, %d %b %Y %H:%M:%S']:
+                    for fmt in [
+                        '%Y-%m-%d',
+                        '%Y%m%d',
+                        '%Y-%m-%dT%H:%M:%S',
+                        '%a, %d %b %Y %H:%M:%S',
+                        '%B %d, %Y',
+                        '%b %d, %Y',
+                    ]:
                         try:
-                            record.published_at = datetime.strptime(metadata['published'][:19], fmt)
+                            record.published_at = datetime.strptime(published_value[:32], fmt)
                             break
                         except ValueError:
                             continue
                 except (ValueError, TypeError):
                     pass
-            elif isinstance(metadata['published'], datetime):
-                record.published_at = metadata['published']
+            elif isinstance(published_value, datetime):
+                record.published_at = published_value
         if metadata.get('description') and _is_missing_text(record.description):
             record.description = metadata['description'][:500]
         if metadata.get('metadata_enriched_at'):
             record.extra['metadata_enriched_at'] = metadata.get('metadata_enriched_at')
         if metadata.get('site_name'):
             record.extra['site_name'] = metadata.get('site_name')
+        if metadata.get('subtitle'):
+            record.extra['subtitle'] = metadata.get('subtitle')
+        if metadata.get('toc'):
+            record.extra['toc'] = metadata.get('toc')
+        if metadata.get('source_url'):
+            record.extra['source_url'] = metadata.get('source_url')
         if metadata.get('domain'):
             record.extra['domain'] = metadata.get('domain')
         if metadata.get('canonical_url'):

@@ -2,10 +2,17 @@
 
 from datetime import datetime
 from pathlib import Path
-from typing import List, Iterator
 from collections import defaultdict
 
 from wiki.config import config
+from wiki.resource_utils import (
+    TOPIC_DEFINITIONS,
+    dedupe_records,
+    display_title,
+    learned_date,
+    resource_page_name,
+    topic_matches,
+)
 from wiki.schemas import ResourceRecord, TimelineEntry, TimelinePeriod
 from wiki.storage import Storage
 
@@ -18,37 +25,31 @@ def format_period_label(dt: datetime) -> str:
 class TimelineGenerator:
     """Generate learning timeline from processed resources."""
     
-    def generate(self, records: List[ResourceRecord]) -> List[TimelinePeriod]:
+    def generate(self, records: list[ResourceRecord]) -> list[TimelinePeriod]:
         """Generate timeline from resources.
         
         Groups resources by month/year and organizes entries.
         """
         # Collect all entries
-        entries: List[TimelineEntry] = []
+        entries: list[TimelineEntry] = []
         
-        for record in records:
+        for record in dedupe_records(records):
             # Determine date for timeline
-            date = None
-            if record.user_consumed_at:
-                date = record.user_consumed_at
-            elif record.processed_at:
-                date = record.processed_at
-            elif record.first_seen_at:
-                date = record.first_seen_at
-            else:
-                date = datetime.utcnow()
+            date = learned_date(record)
             
-            # Extract concepts from record (simplified)
-            concepts = record.tags  # Use tags as concepts for now
+            note_text = ""
+            if record.generated_note_path and record.generated_note_path.exists():
+                note_text = Storage.read_text(record.generated_note_path)
+            concepts = topic_matches(record, note_text) or record.tags
             
             entry = TimelineEntry(
                 date=date,
                 period_label=format_period_label(date),
                 resource_id=record.id,
-                resource_title=record.title or "Untitled",
+                resource_title=display_title(record, mark_missing=True),
                 resource_type=record.source_type,
                 concepts_learned=concepts,
-                summary=record.notes_from_user or f"Learned about {record.title or 'this topic'}"
+                summary=self._summary(record)
             )
             
             entries.append(entry)
@@ -62,7 +63,7 @@ class TimelineGenerator:
             periods_dict[entry.period_label].append(entry)
         
         # Create periods
-        periods: List[TimelinePeriod] = []
+        periods: list[TimelinePeriod] = []
         for period_label, period_entries in periods_dict.items():
             # Collect all concepts
             all_concepts = set()
@@ -81,7 +82,7 @@ class TimelineGenerator:
         
         return periods
     
-    def save(self, periods: List[TimelinePeriod]) -> Path:
+    def save(self, periods: list[TimelinePeriod]) -> Path:
         """Save timeline to disk.
         
         Returns path to timeline file.
@@ -104,7 +105,7 @@ class TimelineGenerator:
         
         return md_path
     
-    def _format_timeline_markdown(self, periods: List[TimelinePeriod]) -> str:
+    def _format_timeline_markdown(self, periods: list[TimelinePeriod]) -> str:
         """Format timeline as Markdown."""
         lines = [
             "# Learning Timeline",
@@ -119,22 +120,31 @@ class TimelineGenerator:
                 "",
             ])
             
-            if period.concepts_learned:
-                lines.append("**Concepts:** " + ", ".join(period.concepts_learned))
-                lines.append("")
-            
+            grouped = defaultdict(list)
             for entry in period.entries:
-                lines.append(f"### {entry.resource_title}")
-                lines.append(f"- **Type:** {entry.resource_type.value}")
-                lines.append(f"- **Summary:** {entry.summary}")
-                if entry.concepts_learned:
-                    lines.append(f"- **Concepts:** {', '.join(entry.concepts_learned)}")
+                topic = entry.concepts_learned[0] if entry.concepts_learned else "uncategorized"
+                grouped[topic].append(entry)
+
+            for topic_slug in sorted(grouped):
+                topic_name = TOPIC_DEFINITIONS.get(topic_slug, {}).get("name", topic_slug.title())
+                lines.extend([f"### {topic_name}", ""])
+                for entry in grouped[topic_slug]:
+                    resource_link = f"./resources/{resource_page_name(entry.resource_id)}"
+                    lines.append(f"- [{entry.resource_title}]({resource_link}) ({entry.resource_type.value})")
+                    if entry.summary:
+                        lines.append(f"  - {entry.summary}")
                 lines.append("")
             
             lines.append("---")
             lines.append("")
         
         return "\n".join(lines)
+
+    def _summary(self, record: ResourceRecord) -> str:
+        """Return a compact one-line timeline summary."""
+        raw = record.notes_from_user or record.description or "Needs review"
+        summary = " ".join(str(raw).split())
+        return summary[:197] + "..." if len(summary) > 200 else summary
 
 
 # Global instance

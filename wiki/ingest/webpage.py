@@ -3,8 +3,7 @@
 import re
 import time
 import logging
-from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 from urllib.parse import urlparse
 
 import httpx
@@ -77,7 +76,10 @@ class WebpageIngestor:
                 ),
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate, br',
+                # Keep this as identity so raw.html is reproducible decoded text.
+                # Some environments do not have brotli support, which can turn
+                # `response.text` into compressed-looking garbage.
+                'Accept-Encoding': 'identity',
                 'DNT': '1',
                 'Connection': 'keep-alive',
             }
@@ -96,12 +98,20 @@ class WebpageIngestor:
             # Small delay to be polite
             time.sleep(self.delay)
             
-            return response.text, response.status_code
+            html = response.text
+            if not self._looks_like_html(html):
+                raise RuntimeError(f"Fetched content for {url} does not look like decoded HTML")
+            return html, response.status_code
             
         except httpx.HTTPStatusError as e:
             raise RuntimeError(f"HTTP error {e.response.status_code} for {url}: {e}")
         except httpx.RequestError as e:
             raise RuntimeError(f"Request failed for {url}: {e}")
+
+    def _looks_like_html(self, html: str) -> bool:
+        """Return True when fetched text looks like decoded HTML."""
+        sample = html.strip().lower()[:1000]
+        return sample.startswith("<!doctype") or sample.startswith("<html") or "<head" in sample
     
     def extract(self, html: str, url: str) -> Dict[str, Any]:
         """Extract content from HTML using available extractors.

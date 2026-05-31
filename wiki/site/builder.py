@@ -5,8 +5,23 @@ from pathlib import Path
 from typing import List
 
 from wiki.config import config
+from wiki.resource_utils import (
+    dedupe_records,
+    display_title,
+    learned_date,
+    resource_page_name,
+    resource_toc,
+    source_url,
+)
 from wiki.schemas import ResourceRecord, ResourceStatus
 from wiki.storage import Storage
+from wiki.generate.citations import (
+    load_chunk_map,
+    linkify_citations,
+    render_source_chunks_section,
+    strip_source_chunks_section,
+)
+from wiki.generate.learning_links import resolve_learning_links
 
 
 class SiteBuilder:
@@ -42,6 +57,9 @@ class SiteBuilder:
         
         # Build tags section
         self._build_tags()
+
+        # Build topics section
+        self._build_topics()
         
         # Build gaps page
         self._build_gaps()
@@ -130,18 +148,33 @@ Do not publish publicly unless content is appropriate for public sharing.
             "|-------|------|--------|------|",
         ]
         
-        for record in records:
-            title = record.title or record.id
+        for record in dedupe_records(records):
+            title = display_title(record, mark_missing=True)
             status = record.status.value
-            date = record.user_consumed_at.strftime("%Y-%m-%d") if record.user_consumed_at else "N/A"
+            date = learned_date(record).strftime("%Y-%m-%d")
             
             # Create individual resource page if note exists
             if record.generated_note_path and record.generated_note_path.exists():
-                resource_filename = f"{record.id.replace(':', '_')}.md"
+                resource_filename = resource_page_name(record.id)
                 resource_path = resources_dir / resource_filename
                 
-                # Copy note content
+                # Copy note content with site-build-time post-processing
                 note_content = Storage.read_text(record.generated_note_path)
+                
+                # Re-linkify citations at site-build time (chunks may have changed)
+                if record.local_normalized_path:
+                    norm_dir = Path(record.local_normalized_path)
+                    chunk_map = load_chunk_map(norm_dir)
+                    if chunk_map:
+                        note_content, cited_ids, _missing = linkify_citations(note_content, chunk_map)
+                        # Re-linkify learning links retroactively
+                        note_content = resolve_learning_links(note_content)
+                        # Re-render source chunks section from current chunks
+                        note_content = strip_source_chunks_section(note_content)
+                        note_content += render_source_chunks_section(
+                            chunk_map, cited_ids, source_url=record.original_url or ""
+                        )
+                
                 Storage.write_text(
                     self._format_resource_header(record)
                     + "\n\n"
@@ -221,6 +254,17 @@ Do not publish publicly unless content is appropriate for public sharing.
         
         tags_path = tags_dir / "index.md"
         Storage.write_text(content, tags_path)
+
+    def _build_topics(self) -> None:
+        """Build the topics section."""
+        topics_dir = self.data_site_dir / "topics"
+        topics_dir.mkdir(exist_ok=True)
+        topics_source = config.get_data_path("processed", "topics")
+        if topics_source.exists():
+            for topic_file in topics_source.glob("*.md"):
+                shutil.copy(topic_file, topics_dir / topic_file.name)
+        elif not (topics_dir / "index.md").exists():
+            Storage.write_text("# Topic Map\n\n_No topics generated yet._\n", topics_dir / "index.md")
     
     def _build_gaps(self) -> None:
         """Build the gaps page."""
@@ -251,8 +295,8 @@ Do not publish publicly unless content is appropriate for public sharing.
 
     def _format_resource_header(self, record: ResourceRecord) -> str:
         """Format source metadata shown before generated notes."""
-        title = record.title or record.id
-        source_url = record.normalized_url or record.original_url
+        title = display_title(record, mark_missing=True)
+        src_url = source_url(record)
         lines = [
             "---",
             f'title: "{self._yaml_escape(title)}"',
@@ -260,17 +304,34 @@ Do not publish publicly unless content is appropriate for public sharing.
             "",
             f"# {title}",
             "",
+            "## Resource metadata",
+            "",
             "| Field | Value |",
             "|---|---|",
-            f"| Source type | {record.source_type.value} |",
+            f"| Type | {record.source_type.value} |",
             f"| Author/channel | {self._table_value(record.author or 'Unknown')} |",
-            f"| Source URL | {self._table_value(source_url)} |",
-            f"| LLM provider | {self._table_value(record.llm_provider or 'Unknown')} |",
-            f"| LLM model | {self._table_value(record.llm_model or 'Unknown')} |",
+            f"| Source URL | {self._table_value(src_url)} |",
+            f"| Processed | {self._table_value(record.status.value)} |",
+            f"| Provider | {self._table_value(record.llm_provider or 'Unknown')} |",
+            f"| Model | {self._table_value(record.llm_model or 'Unknown')} |",
             f"| Prompt version | {self._table_value(record.prompt_version or 'Unknown')} |",
         ]
         if record.published_at:
             lines.append(f"| Published/uploaded | {record.published_at.date().isoformat()} |")
+        if record.extra.get("important_timestamps"):
+            lines.extend(["", "## Important timestamps", ""])
+            for timestamp in record.extra.get("important_timestamps", []):
+                lines.append(f"- {timestamp}s")
+        lines.extend(["", "## Resource table of contents", ""])
+        toc = resource_toc(record)
+        if toc:
+            for entry in toc:
+                timestamp = entry.get("timestamp")
+                title = entry.get("title", "Section")
+                prefix = f"[{timestamp}] " if timestamp else ""
+                lines.append(f"- {prefix}{title}")
+        else:
+            lines.append("_No resource TOC extracted yet._")
         return "\n".join(lines)
 
     def _strip_duplicate_title(self, content: str) -> str:

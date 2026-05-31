@@ -19,8 +19,8 @@ def _chunks() -> list[WebpageChunk]:
     ]
 
 
-def test_prompt_version_bumped_to_v2():
-    assert PROMPT_VERSION == "harish_llm_wiki_v2"
+def test_prompt_version_bumped_to_v4():
+    assert PROMPT_VERSION == "harish_llm_wiki_v4"
 
 
 def test_resource_prompt_uses_first_principles_contract():
@@ -38,9 +38,13 @@ def test_resource_prompt_uses_first_principles_contract():
 
     assert "### First-principles explanation" in prompt
     assert "### Source-backed summary" in prompt
+    assert "### Resource table of contents" in prompt
+    assert "### Concrete example / toy implementation" in prompt
     assert "### Needs verification" in prompt
     assert "### Karpathy-style explanation" not in prompt
     assert '"title": "RAG Notes"' in prompt
+    assert "CHUNK ID: chunk-001" in prompt
+    assert "CITATION LABEL: paragraph 1" in prompt
 
 
 def test_mock_output_satisfies_note_contract():
@@ -69,6 +73,7 @@ def test_mock_output_satisfies_note_contract():
     assert issues == []
     assert "# RAG Notes" in content
     assert "## First-principles explanation" in content
+    assert "## Resource table of contents" in content
 
 
 def test_contract_validator_rejects_missing_sections():

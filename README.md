@@ -56,6 +56,7 @@ LLM_WIKI_DATA_DIR=~/llm-wiki-data
 LLM_PROVIDER=ollama_cloud
 OLLAMA_API_KEY=your_api_key_here
 OLLAMA_CLOUD_MODEL=qwen2.5:7b
+LLM_NOTE_REPAIR_RETRIES=1
 ```
 
 ### 3. Initialize
@@ -134,8 +135,8 @@ python -m wiki process-new --dry-run
 ### 6. Build and View Site
 
 ```bash
-# Generate static site
-python -m wiki build-site
+# Generate static site; --refresh regenerates derived views without LLM calls
+python -m wiki build-site --refresh
 
 # View locally (development server with hot reload)
 cd site
@@ -184,11 +185,18 @@ python -m wiki process-new --dry-run
 # Limit to N resources
 python -m wiki process-new --limit 2
 
+# Process exactly one known resource
+python -m wiki process-new --force --limit 1 --resource-id webpage:abc123
+
 # Skip confirmation for LLM calls
 python -m wiki process-new --yes
 
 # Force reprocess already-processed resources
 python -m wiki process-new --force
+
+# Bypass the real-provider quality gate only after review
+python -m wiki process-new --force --yes --allow-untitled
+python -m wiki process-new --force --yes --skip-quality-gate
 
 # Generate notes only for a specific resource
 python -m wiki generate-notes --resource youtube:abc123
@@ -202,6 +210,16 @@ python -m wiki generate-notes --limit 3 --yes
 ```bash
 # Build the VitePress site
 python -m wiki build-site
+
+# Regenerate timeline, topics, tags, concepts, gaps, and site docs without LLM calls
+python -m wiki regenerate-views
+
+# Refresh derived views before building the VitePress mirror
+python -m wiki build-site --refresh
+
+# Smoke-test provider configuration without touching resource data
+python -m wiki test-llm --provider mock
+python -m wiki test-llm --provider ollama_cloud
 
 # Validate configuration and content
 python -m wiki validate
@@ -274,6 +292,8 @@ The pipeline protects against accidental token consumption:
 3. **Limit mode**: Process only N resources at a time
 4. **Confirmation prompt**: If processing > 2 resources with a real provider, requires `--yes`
 5. **LLM caching**: Skips regeneration if content hasn't changed
+6. **Quality gate**: Before `process-new --force --yes` with a real provider, checks metadata coverage, untitled resources, webpage extraction, transcript chunks, and source URLs. Use `--allow-untitled` or `--skip-quality-gate` only when intentional.
+7. **Contract repair**: If a generated note fails validation, the pipeline retries with a strict repair prompt. `LLM_NOTE_REPAIR_RETRIES=1` by default. If repair still fails, debug artifacts are written under `~/llm-wiki-data/debug/failed_notes/` and the resource is marked `failed_retryable` with `requires_human_review=true`.
 
 ```bash
 # Safe testing - no API costs
@@ -320,10 +340,14 @@ harish-llm-wiki/
 ├── raw/                 # Downloaded transcripts and HTML
 ├── normalized/          # Cleaned and chunked content
 ├── processed/           # Generated LLM notes
+│   ├── topics/          # Rule-based topic map pages
+│   ├── timeline/        # Grouped timeline views
+│   ├── tags/            # Tag views
+│   └── concepts/        # Concept pages
 └── site_generated/      # Generated VitePress content
 ```
 
-`python -m wiki build-site` mirrors generated Markdown into ignored `site/docs` paths so VitePress can serve it locally. Those files are reproducible from `~/llm-wiki-data` and should remain uncommitted.
+`python -m wiki build-site --refresh` regenerates derived views and mirrors generated Markdown into ignored `site/docs` paths so VitePress can serve it locally. Those files are reproducible from `~/llm-wiki-data` and should remain uncommitted.
 
 **Important**: Raw transcripts, HTML, and LLM-generated notes contain copyrighted content. Do not publish the external data directory publicly.
 
@@ -336,6 +360,7 @@ make test
 pytest tests/ -q
 
 # Test with mock provider
+LLM_PROVIDER=mock python -m wiki test-llm --provider mock
 LLM_PROVIDER=mock python -m wiki process-new --dry-run
 LLM_PROVIDER=mock python -m wiki process-new --limit 1 --yes
 ```

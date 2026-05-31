@@ -20,6 +20,7 @@ export default defineConfig({
     nav: [
       { text: 'Home', link: '/' },
       { text: 'Resources', link: '/resources/' },
+      { text: 'Topics', link: '/topics/' },
       { text: 'Timeline', link: '/timeline' },
       { text: 'Concepts', link: '/concepts/' },
       { text: 'Tags', link: '/tags/' },
@@ -40,6 +41,14 @@ export default defineConfig({
           text: 'Concepts',
           items: [
             { text: 'All Concepts', link: '/concepts/' },
+          ]
+        }
+      ],
+      '/topics/': [
+        {
+          text: 'Topics',
+          items: [
+            { text: 'Topic Map', link: '/topics/' },
           ]
         }
       ],

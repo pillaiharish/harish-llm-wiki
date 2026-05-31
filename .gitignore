@@ -59,6 +59,7 @@ site/docs/.vitepress/cache/
 site/docs/.vitepress/dist/
 site/docs/resources/
 site/docs/concepts/
+site/docs/topics/
 site/docs/tags/
 site/docs/timeline.md
 site/docs/gaps.md
@@ -73,6 +74,7 @@ dist/
 data/
 cache/
 tmp/
+debug/
 *.sqlite
 *.sqlite3
 *.db
