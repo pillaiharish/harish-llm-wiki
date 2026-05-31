@@ -8,10 +8,10 @@ from pathlib import Path
 from typing import Iterator
 
 from wiki.resource_utils import anchor_slug, short_citation_label
-from wiki.schemas import YouTubeChunk, WebpageChunk, MarkdownChunk, SourceChunk
+from wiki.schemas import MediaTranscriptChunk, YouTubeChunk, WebpageChunk, MarkdownChunk, SourceChunk
 
 
-CITATION_PATTERN = re.compile(r"\[(?:source:\s*)?([a-z]+:[a-zA-Z0-9_-]+-[a-z]\d{3,4})\]")
+CITATION_PATTERN = re.compile(r"\[(?:source:\s*)?([a-z_]+:[a-zA-Z0-9_-]+-[a-z]\d{3,6})\]")
 
 FENCED_CODE_RE = re.compile(r"```[\s\S]*?```", re.DOTALL)
 
@@ -27,8 +27,10 @@ def load_chunks(norm_dir: Path) -> Iterator[SourceChunk]:
             yield YouTubeChunk.model_validate(data)
         elif source_type == "webpage":
             yield WebpageChunk.model_validate(data)
-        elif source_type == "markdown":
+        elif source_type in {"markdown", "medium_markdown"}:
             yield MarkdownChunk.model_validate(data)
+        elif source_type in {"local_video", "local_audio", "local_transcript"}:
+            yield MediaTranscriptChunk.model_validate(data)
 
 
 def load_chunk_map(norm_dir: Path) -> dict[str, SourceChunk]:
@@ -141,6 +143,8 @@ def render_source_chunks_section(
 
         if isinstance(chunk, YouTubeChunk):
             summary = f"{chunk_id} — {label}"
+        elif isinstance(chunk, MediaTranscriptChunk):
+            summary = f"{chunk_id} — local media timestamp: {label}"
         elif isinstance(chunk, (WebpageChunk, MarkdownChunk)):
             heading = getattr(chunk, "section_heading", None) or ""
             para = getattr(chunk, "paragraph_index", None)

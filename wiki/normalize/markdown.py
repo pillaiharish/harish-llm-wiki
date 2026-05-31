@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from wiki.config import config
-from wiki.schemas import ResourceRecord, SourceType, MarkdownChunk
+from wiki.schemas import ResourceRecord, SourceType
 from wiki.storage import Storage
 from wiki.normalize.chunker import chunker
 
@@ -45,8 +45,9 @@ class MarkdownNormalizer:
         
         # Generate chunks
         file_path = str(norm_md_path)
+        source_type = record.source_type if record.source_type == SourceType.MEDIUM_MARKDOWN else SourceType.MARKDOWN
         chunks = list(chunker.chunk_text(
-            content, record.id, SourceType.MARKDOWN, 
+            content, record.id, source_type,
             url=record.normalized_url, file_path=file_path
         ))
         

@@ -1,8 +1,6 @@
 """Normalization modules for chunking content."""
 
-import json
 import re
-from pathlib import Path
 from typing import List, Iterator, Dict, Any
 
 from wiki.schemas import YouTubeChunk, WebpageChunk, MarkdownChunk, SourceType
@@ -196,7 +194,7 @@ class Chunker:
             return MarkdownChunk(
                 resource_id=resource_id,
                 chunk_id=f"{resource_id}-c{chunk_id:04d}",
-                source_type=SourceType.MARKDOWN,
+                source_type=source_type,
                 text=text,
                 section_heading=section_heading,
                 paragraph_index=start_idx + 1,  # 1-indexed

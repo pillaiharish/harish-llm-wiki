@@ -13,6 +13,7 @@ from typing import Optional, Dict, Any
 from wiki.config import config
 from wiki.schemas import ResourceRecord
 from wiki.storage import Storage
+from wiki.ingest.blog_router import get_blog_extractor
 
 logger = logging.getLogger(__name__)
 
@@ -210,10 +211,14 @@ class WebpageMetadataEnricher:
         published date from OpenGraph, Twitter Card, and meta tags.
         """
         if not record.local_raw_path:
-            logger.warning(f"No raw path for {record.id}, skipping metadata enrichment")
-            record.extra['metadata_status'] = 'failed_retryable'
-            record.extra['metadata_failure_reason'] = 'No raw path'
-            return record
+            try:
+                from wiki.ingest.webpage import WebpageIngestor
+                return WebpageIngestor().ingest(record)
+            except Exception as e:
+                logger.warning(f"No raw path for {record.id}, and ingest failed: {e}")
+                record.extra['metadata_status'] = 'failed_retryable'
+                record.extra['metadata_failure_reason'] = f'No raw path: {e}'
+                return record
         
         # Find raw HTML file
         raw_dir = Path(record.local_raw_path)
@@ -267,10 +272,14 @@ class WebpageMetadataEnricher:
                 html = fetched_html
                 # Save the re-fetched HTML
                 Storage.write_text(html, html_path)
-                extraction = ingestor.extract(html, record.original_url)
+                extraction = get_blog_extractor(record.original_url).extract(
+                    html,
+                    record.original_url,
+                    status_code=status_code,
+                )
                 extracted_md_path = raw_dir / "extracted.md"
-                if extraction.get("content"):
-                    Storage.write_text(extraction["content"], extracted_md_path)
+                if extraction.content_markdown:
+                    Storage.write_text(extraction.content_markdown, extracted_md_path)
                 else:
                     extracted_md_path.unlink(missing_ok=True)
                 logger.info(f"Re-fetched webpage for {record.id} (status: {status_code})")
@@ -280,8 +289,15 @@ class WebpageMetadataEnricher:
                 record.extra['metadata_failure_reason'] = str(e)
                 return record
         
-        # Extract metadata
+        # Extract metadata through the platform router first, then merge generic fallbacks.
+        blog_extraction = get_blog_extractor(record.original_url).extract(html, record.original_url)
         metadata = self._extract_metadata(html, record.original_url)
+        blog_metadata = blog_extraction.metadata()
+        for key, value in blog_metadata.items():
+            if value not in (None, "", []):
+                metadata[key] = value
+        if blog_extraction.content_markdown:
+            Storage.write_text(blog_extraction.content_markdown, raw_dir / "extracted.md")
         extracted_md_path = raw_dir / "extracted.md"
         if extracted_md_path.exists():
             extracted = Storage.read_text(extracted_md_path)
@@ -309,7 +325,7 @@ class WebpageMetadataEnricher:
         
         # Update record
         record = self._update_record_from_metadata(record, metadata)
-        record.extra['metadata_status'] = 'enriched' if metadata.get('title') else 'partial'
+        record.extra['metadata_status'] = metadata.get("metadata_status") or ('enriched' if metadata.get('title') else 'partial')
         if metadata.get('title'):
             record.extra.pop('metadata_failure_reason', None)
         
@@ -517,7 +533,7 @@ class WebpageMetadataEnricher:
         if metadata.get('author') and _is_missing_text(record.author):
             record.author = metadata['author']
         published_value = metadata.get('published_at') or metadata.get('published')
-        if published_value and not record.published_at:
+        if published_value and (not record.published_at or metadata.get('platform') == 'huggingface_blog'):
             if isinstance(published_value, str):
                 try:
                     # Try multiple date formats
@@ -549,10 +565,14 @@ class WebpageMetadataEnricher:
             record.extra['metadata_enriched_at'] = metadata.get('metadata_enriched_at')
         if metadata.get('site_name'):
             record.extra['site_name'] = metadata.get('site_name')
+        if metadata.get('platform'):
+            record.extra['platform'] = metadata.get('platform')
         if metadata.get('subtitle'):
             record.extra['subtitle'] = metadata.get('subtitle')
         if metadata.get('toc'):
             record.extra['toc'] = metadata.get('toc')
+        if metadata.get('links'):
+            record.extra['links'] = metadata.get('links')
         if metadata.get('source_url'):
             record.extra['source_url'] = metadata.get('source_url')
         if metadata.get('domain'):

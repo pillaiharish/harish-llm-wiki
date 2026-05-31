@@ -2,6 +2,9 @@
 
 from pathlib import Path
 from typing import Optional, List
+from datetime import datetime
+import hashlib
+import json
 
 import typer
 from rich.console import Console
@@ -9,15 +12,21 @@ from rich.table import Table
 from rich import box
 
 from wiki.config import config
-from wiki.schemas import ResourceStatus
+from wiki.schemas import ResourceIdentity, ResourceRecord, ResourceStatus, SourceType
 from wiki.registry import registry
 from wiki.dedupe import deduplicator
 from wiki.ingest.youtube import youtube_ingestor
 from wiki.ingest.webpage import webpage_ingestor
 from wiki.ingest.markdown import markdown_ingestor
+from wiki.ingest.media import extract_audio_to_wav, media_ingestor
 from wiki.normalize.transcript import youtube_normalizer
 from wiki.normalize.webpage import webpage_normalizer
 from wiki.normalize.markdown import markdown_normalizer
+from wiki.normalize.transcript_media import (
+    parse_transcript_text,
+    transcript_media_normalizer,
+)
+from wiki.asr.providers import get_asr_provider
 from wiki.llm.ollama_cloud import OllamaCloudProvider
 from wiki.llm.ollama_local import OllamaLocalProvider
 from wiki.llm.openai_compatible import OpenAICompatibleProvider
@@ -33,6 +42,7 @@ from wiki.generate.topics import topic_generator
 from wiki.site.builder import site_builder
 from wiki.enrich.metadata import youtube_metadata_enricher, webpage_metadata_enricher
 from wiki.resource_utils import is_replaceable_title
+from wiki.storage import Storage
 
 
 def normalize_provider_name(name: str | None) -> str:
@@ -858,7 +868,9 @@ def process_new(
                     youtube_ingestor.ingest(record)
                 elif record.source_type.value == "webpage":
                     webpage_ingestor.ingest(record)
-                elif record.source_type.value == "markdown":
+                elif record.source_type.value in {"markdown", "medium_markdown"}:
+                    pass
+                elif record.source_type.value in {"local_video", "local_audio", "local_transcript"}:
                     pass
                 
                 registry.update_status(record.id, ResourceStatus.RAW_SAVED)
@@ -890,8 +902,10 @@ def process_new(
                     youtube_normalizer.normalize(record)
                 elif record.source_type.value == "webpage":
                     webpage_normalizer.normalize(record)
-                elif record.source_type.value == "markdown":
+                elif record.source_type.value in {"markdown", "medium_markdown"}:
                     markdown_normalizer.normalize(record)
+                elif record.source_type.value in {"local_video", "local_audio", "local_transcript"}:
+                    transcript_media_normalizer.normalize(record)
                 
                 registry.update(record)
                 console.print("  [green]✓[/green] Normalized")
@@ -1198,6 +1212,223 @@ def import_markdown(
     registry.update(record)
     
     console.print(f"[green]✓[/green] Imported: {record.id}")
+
+
+def _title_from_markdown(content: str, fallback: str) -> str:
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# "):
+            return stripped.lstrip("#").strip()
+    return fallback
+
+
+def _insert_identity_or_get(identity: ResourceIdentity) -> tuple[ResourceRecord, bool]:
+    existing = registry.get_by_canonical_id(identity.canonical_id)
+    if existing:
+        return existing, False
+    return registry.insert(identity, status=ResourceStatus.NEW), True
+
+
+@app.command("import-medium-markdown")
+def import_medium_markdown(
+    file: Path = typer.Option(..., "--file", "-f", help="Path to copied Medium Markdown"),
+    original_url: str = typer.Option(..., "--original-url", help="Original Medium URL"),
+    title: Optional[str] = typer.Option(None, "--title", help="Optional title override"),
+):
+    """Import manually copied/exported Medium Markdown."""
+    path = file.expanduser().resolve()
+    if not path.exists():
+        console.print(f"[red]✗[/red] File not found: {path}")
+        raise typer.Exit(1)
+
+    content = path.read_text(encoding="utf-8")
+    frontmatter, _body = markdown_ingestor.parse_frontmatter(content)
+    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    canonical_id = f"medium_markdown:{content_hash}"
+    existing = registry.get_by_canonical_id(canonical_id)
+    if existing:
+        console.print(f"[yellow]⚠[/yellow] Duplicate Medium Markdown: {existing.id}")
+        return
+
+    identity = ResourceIdentity(
+        source_type=SourceType.MEDIUM_MARKDOWN,
+        canonical_id=canonical_id,
+        original_url=original_url,
+        normalized_url=frontmatter.get("original_url") or original_url,
+        content_hash=content_hash,
+    )
+    record = registry.insert(identity, status=ResourceStatus.NEW)
+    record.title = title or frontmatter.get("title") or _title_from_markdown(content, path.stem)
+    record.author = frontmatter.get("author")
+    record.tags = list(frontmatter.get("tags") or [])
+    if frontmatter.get("user_read_at"):
+        try:
+            record.user_consumed_at = datetime.fromisoformat(str(frontmatter["user_read_at"]))
+        except ValueError:
+            pass
+    raw_dir = config.get_data_path("raw", "markdown", "medium", content_hash[:8])
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    Storage.write_text(content, raw_dir / "source.md")
+    Storage.write_json(
+        {
+            "content_hash": content_hash,
+            "canonical_id": canonical_id,
+            "original_file": str(path),
+            "original_url": original_url,
+            "platform": "medium",
+            "has_frontmatter": bool(frontmatter),
+            "frontmatter_keys": list(frontmatter.keys()),
+        },
+        raw_dir / "metadata.json",
+    )
+    record.local_raw_path = raw_dir
+    record.extra.update({"platform": "medium", "manual_markdown": True})
+    record = markdown_normalizer.normalize(record)
+    registry.update(record)
+    console.print(f"[green]✓[/green] Imported Medium Markdown: {record.id}")
+
+
+@app.command("add-media")
+def add_media(
+    file: Path = typer.Option(..., "--file", "-f", help="Path to local audio/video file"),
+):
+    """Add a local audio/video file to the registry without copying it into Git."""
+    path = file.expanduser().resolve()
+    try:
+        built = media_ingestor.build_record(path)
+    except Exception as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    identity = ResourceIdentity(
+        source_type=built.source_type,
+        canonical_id=built.canonical_id,
+        original_url=built.original_url,
+        normalized_url=built.normalized_url,
+        content_hash=built.content_hash,
+    )
+    existing = registry.get_by_canonical_id(identity.canonical_id)
+    if existing:
+        console.print(f"[yellow]⚠[/yellow] Duplicate media skipped: {existing.id}")
+        return
+
+    record = registry.insert(identity, status=ResourceStatus.NEW)
+    built.first_seen_at = record.first_seen_at
+    built.last_seen_at = record.last_seen_at
+    registry.update(built)
+    console.print(f"[green]✓[/green] Added media: {built.id}")
+    console.print(f"[dim]Transcription status: {built.extra.get('transcription_status')}[/dim]")
+
+
+@app.command("transcribe-media")
+def transcribe_media(
+    resource_id: str = typer.Option(..., "--resource-id", "--resource", help="Media resource ID"),
+    provider: str = typer.Option("whisper", "--provider", help="ASR provider: whisper, faster_whisper, mock"),
+):
+    """Extract audio and transcribe a local media resource."""
+    record = registry.get_by_id(resource_id)
+    if not record:
+        console.print(f"[red]Resource not found: {resource_id}[/red]")
+        raise typer.Exit(1)
+    if record.source_type not in {SourceType.LOCAL_AUDIO, SourceType.LOCAL_VIDEO}:
+        console.print(f"[red]Resource is not local audio/video: {record.source_type.value}[/red]")
+        raise typer.Exit(1)
+
+    raw_dir = Path(record.local_raw_path or config.get_data_path("raw", "media", record.content_hash or resource_id.split(":", 1)[-1]))
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    original_path = Path(record.extra.get("original_path") or record.original_url.removeprefix("local://"))
+    audio_path = raw_dir / "audio.wav"
+    try:
+        extract_audio_to_wav(original_path, audio_path)
+        asr = get_asr_provider(provider)
+        result = asr.transcribe(audio_path)
+    except Exception as exc:
+        record.extra["transcription_status"] = "failed_retryable"
+        record.extra["transcription_failure_reason"] = str(exc)
+        registry.update(record)
+        console.print(f"[red]✗ Transcription failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    segments = [segment.to_dict() for segment in result.segments]
+    Storage.write_json({"text": result.text, "language": result.language, "segments": segments}, raw_dir / "transcript.json")
+    with (raw_dir / "segments.jsonl").open("w", encoding="utf-8") as handle:
+        for segment in segments:
+            handle.write(json.dumps(segment, ensure_ascii=False) + "\n")
+    Storage.write_text(
+        "\n".join(f"[{segment['start']:.2f}] {segment['text']}" for segment in segments) + "\n",
+        raw_dir / "transcript.md",
+    )
+    record.local_raw_path = raw_dir
+    record.extra.update({
+        "audio_path": str(audio_path),
+        "transcript_path": str(raw_dir / "transcript.json"),
+        "transcription_status": "complete",
+        "transcription_provider": asr.provider_name,
+        "asr_model": asr.model,
+        "asr_task": asr.task,
+    })
+    record = transcript_media_normalizer.normalize(record)
+    registry.update(record)
+    console.print(f"[green]✓[/green] Transcribed media: {record.id}")
+
+
+@app.command("import-transcript")
+def import_transcript(
+    file: Path = typer.Option(..., "--file", "-f", help="Path to transcript text file"),
+    source_title: Optional[str] = typer.Option(None, "--source-title", help="Optional source title"),
+    source_url: Optional[str] = typer.Option(None, "--source-url", help="Optional source URL"),
+):
+    """Import an existing local transcript and normalize it into timestamp chunks."""
+    path = file.expanduser().resolve()
+    if not path.exists():
+        console.print(f"[red]✗[/red] File not found: {path}")
+        raise typer.Exit(1)
+
+    content = path.read_text(encoding="utf-8")
+    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    canonical_id = f"transcript:{content_hash}"
+    existing = registry.get_by_canonical_id(canonical_id)
+    if existing:
+        console.print(f"[yellow]⚠[/yellow] Duplicate transcript skipped: {existing.id}")
+        return
+
+    identity = ResourceIdentity(
+        source_type=SourceType.LOCAL_TRANSCRIPT,
+        canonical_id=canonical_id,
+        original_url=source_url or f"local://{path}",
+        normalized_url=source_url or f"local://{path}",
+        content_hash=content_hash,
+    )
+    record = registry.insert(identity, status=ResourceStatus.NEW)
+    raw_dir = config.get_data_path("raw", "transcript", content_hash[:8])
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    segments = parse_transcript_text(content)
+    Storage.write_text(content, raw_dir / "transcript.txt")
+    Storage.write_json({"segments": segments}, raw_dir / "transcript.json")
+    Storage.write_json(
+        {
+            "source_title": source_title or path.stem,
+            "source_url": source_url,
+            "content_hash": content_hash,
+            "original_file": str(path),
+            "segment_count": len(segments),
+        },
+        raw_dir / "metadata.json",
+    )
+    record.title = source_title or path.stem
+    record.local_raw_path = raw_dir
+    record.extra.update({
+        "media_type": "local_transcript",
+        "original_path": str(path),
+        "transcript_path": str(raw_dir / "transcript.json"),
+        "transcription_status": "imported",
+        "transcription_provider": "manual",
+        "asr_model": "manual",
+        "asr_task": "transcribe",
+    })
+    record = transcript_media_normalizer.normalize(record)
+    registry.update(record)
+    console.print(f"[green]✓[/green] Imported transcript: {record.id}")
 
 
 @app.command("normalize-registry-providers")

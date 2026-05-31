@@ -247,6 +247,25 @@ def test_deterministic_completion_adds_missing_provenance(data_dir):
     ) == []
 
 
+def test_deterministic_completion_appends_missing_provenance_values(data_dir):
+    record = _record(data_dir)
+    chunks = [_chunk()]
+    content = _valid_note().replace("- LLM provider: sequence\n- LLM model: sequence-model\n", "")
+
+    completed = complete_note_contract_deterministically(content, record, chunks, "sequence", "sequence-model")
+
+    provenance = completed.split("## Provenance", 1)[1]
+    assert "- LLM provider: sequence" in provenance
+    assert "- LLM model: sequence-model" in provenance
+    assert validate_generated_note_contract(
+        completed,
+        chunks,
+        provider="sequence",
+        model="sequence-model",
+        prompt_version=PROMPT_VERSION,
+    ) == []
+
+
 def test_deterministic_completion_citations_use_existing_known_ids(data_dir):
     record = _record(data_dir)
     chunks = [_chunk(), _chunk("webpage:test-p002")]

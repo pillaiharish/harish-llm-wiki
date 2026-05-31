@@ -8,7 +8,14 @@ from typing import List, Iterator, Any
 
 from wiki.config import config
 from wiki.resource_utils import display_title, resource_toc
-from wiki.schemas import ResourceRecord, ResourceStatus, YouTubeChunk, WebpageChunk, MarkdownChunk
+from wiki.schemas import (
+    MarkdownChunk,
+    MediaTranscriptChunk,
+    ResourceRecord,
+    ResourceStatus,
+    YouTubeChunk,
+    WebpageChunk,
+)
 from wiki.storage import Storage
 from wiki.llm.base import LLMProvider
 from wiki.llm.prompts import (
@@ -46,8 +53,10 @@ def load_chunks(norm_dir: Path) -> Iterator[YouTubeChunk | WebpageChunk | Markdo
                 yield YouTubeChunk.model_validate(data)
             elif source_type == 'webpage':
                 yield WebpageChunk.model_validate(data)
-            elif source_type == 'markdown':
+            elif source_type in {'markdown', 'medium_markdown'}:
                 yield MarkdownChunk.model_validate(data)
+            elif source_type in {'local_video', 'local_audio', 'local_transcript'}:
+                yield MediaTranscriptChunk.model_validate(data)
 
 
 def compute_chunks_hash(chunks: List[Any]) -> str:
@@ -88,6 +97,13 @@ def _has_markdown_heading(content: str, heading: str) -> bool:
         if text == target:
             return True
     return False
+
+
+def _normalize_heading(line: str) -> str:
+    stripped = line.strip()
+    if not stripped.startswith("#"):
+        return ""
+    return stripped.lstrip("#").strip().lower()
 
 
 def _extract_section(content: str, heading: str) -> str:
@@ -197,6 +213,15 @@ def complete_note_contract_deterministically(
     if not cited_chunk_ids:
         cited_chunk_ids = [str(chunk.chunk_id) for chunk in chunks[:3]]
 
+    completed = _complete_existing_contract_sections(
+        completed,
+        record,
+        title,
+        cited_chunk_ids,
+        provider,
+        model,
+    )
+
     for section in REQUIRED_NOTE_SECTIONS:
         if _has_markdown_heading(completed, section):
             continue
@@ -206,6 +231,68 @@ def complete_note_contract_deterministically(
         )
 
     return completed.rstrip() + "\n"
+
+
+def _complete_existing_contract_sections(
+    content: str,
+    record: ResourceRecord,
+    title: str,
+    chunk_ids: list[str],
+    provider: str,
+    model: str,
+) -> str:
+    """Append safe missing contract details to existing sections."""
+    completed = content
+    if _has_markdown_heading(completed, "Provenance"):
+        provenance = _extract_section(completed, "Provenance").lower()
+        additions = [
+            line
+            for line in _section_placeholder("Provenance", title, chunk_ids, record, provider, model).splitlines()
+            if line.lower().lstrip("- ").split(":", 1)[-1].strip() not in provenance
+        ]
+        if additions:
+            completed = _append_to_section(completed, "Provenance", additions)
+
+    if _has_markdown_heading(completed, "Citations") and chunk_ids:
+        citations = _extract_section(completed, "Citations")
+        missing = [f"- [source: {chunk_id}]" for chunk_id in chunk_ids if chunk_id not in citations]
+        if missing and not any(chunk_id in citations for chunk_id in chunk_ids):
+            completed = _append_to_section(completed, "Citations", missing)
+
+    if _has_markdown_heading(completed, "Source-backed summary") and chunk_ids:
+        summary = _extract_section(completed, "Source-backed summary")
+        if not any(chunk_id in summary for chunk_id in chunk_ids):
+            completed = _append_to_section(
+                completed,
+                "Source-backed summary",
+                [
+                    "- Generated response did not include a usable source-backed summary; "
+                    f"human review required against source chunks. [source: {chunk_ids[0]}]"
+                ],
+            )
+    return completed
+
+
+def _append_to_section(content: str, section: str, lines_to_add: list[str]) -> str:
+    lines = content.splitlines()
+    start = None
+    for index, line in enumerate(lines):
+        if _normalize_heading(line) == section.lower():
+            start = index
+            break
+    if start is None:
+        return content
+
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        line = lines[index]
+        if line.startswith("## ") and _normalize_heading(line) != section.lower():
+            end = index
+            break
+
+    insertion = ["", *lines_to_add]
+    lines[end:end] = insertion
+    return "\n".join(lines).rstrip()
 
 
 def validate_generated_note_contract(

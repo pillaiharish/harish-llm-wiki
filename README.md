@@ -420,6 +420,13 @@ The article argues for semantic chunking.
 **Citation:** RAG Chunking Guide, section "Chunk Size", paragraph 6
 ```
 
+### Local Media/Transcripts
+
+```markdown
+The lecture explains retrieval latency.  
+**Citation:** local media timestamp: 00:02:00-00:02:35
+```
+
 ### LLM-Added Explanations
 
 ```markdown
@@ -454,6 +461,40 @@ The original resource did not explain hybrid retrieval.
 ```
 
 Providers: `ollama_cloud` (default) | `ollama_local` | `openai_compatible` | `mock`
+
+## Medium
+
+Public Medium URLs are fetched only if publicly accessible. The wiki does not bypass login walls or paywalls. If a Medium page is not fully available, it is marked `needs_manual_markdown` and you can import copied/exported Markdown:
+
+```bash
+python -m wiki add-resource --url "https://medium.com/..."
+python -m wiki import-medium-markdown --file article.md --original-url "https://medium.com/..."
+python -m wiki process-new --only-stale --skip-ingest --provider ollama_cloud --resource-id medium_markdown:<hash> --yes
+python -m wiki build-site --refresh
+```
+
+## Local Video/Audio
+
+Ollama Cloud is not used for raw MP3/video transcription. Extract/transcribe locally first, then send transcript chunks to the LLM note pipeline.
+
+```bash
+python -m wiki add-media --file ~/Videos/talk.mp4
+python -m wiki transcribe-media --resource-id media:<hash> --provider whisper
+python -m wiki process-new --only-stale --skip-ingest --provider ollama_cloud --resource-id media:<hash> --yes
+python -m wiki build-site --refresh
+```
+
+Transcription uses `ffmpeg` to normalize audio to 16 kHz mono WAV. Install it with `brew install ffmpeg` on macOS or `sudo apt-get install ffmpeg` on Ubuntu. Local Whisper support requires `pip install -U openai-whisper`; faster-whisper requires `pip install -U faster-whisper`.
+
+## Existing Transcript
+
+Use this when you already have a transcript from Colab, Whisper, or manual notes:
+
+```bash
+python -m wiki import-transcript --file transcript.txt --source-title "My Lecture"
+python -m wiki process-new --only-stale --skip-ingest --provider ollama_cloud --resource-id transcript:<hash> --yes
+python -m wiki build-site --refresh
+```
 
 ## Makefile Commands
 

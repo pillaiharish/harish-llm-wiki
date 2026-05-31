@@ -5,7 +5,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 
 # =============================================================================
@@ -19,6 +19,9 @@ class SourceType(str, Enum):
     WEBPAGE = "webpage"
     MARKDOWN = "markdown"
     MEDIUM_MARKDOWN = "medium_markdown"
+    LOCAL_VIDEO = "local_video"
+    LOCAL_AUDIO = "local_audio"
+    LOCAL_TRANSCRIPT = "local_transcript"
 
 
 class ResourceStatus(str, Enum):
@@ -206,8 +209,23 @@ class MarkdownChunk(SourceChunk):
         return self.citation_label
 
 
+class MediaTranscriptChunk(SourceChunk):
+    """A citeable chunk from a local media or transcript resource."""
+
+    source_type: SourceType = SourceType.LOCAL_TRANSCRIPT
+    start_time: float
+    end_time: float
+    source_url: Optional[str] = None
+
+    @property
+    def citation_label_formatted(self) -> str:
+        start = YouTubeChunk._format_timestamp(self.start_time)
+        end = YouTubeChunk._format_timestamp(self.end_time)
+        return f"{start}-{end}"
+
+
 # Union type for all chunks
-ChunkType = YouTubeChunk | WebpageChunk | MarkdownChunk
+ChunkType = YouTubeChunk | WebpageChunk | MarkdownChunk | MediaTranscriptChunk
 
 
 # =============================================================================

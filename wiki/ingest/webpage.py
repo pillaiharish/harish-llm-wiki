@@ -3,6 +3,7 @@
 import re
 import time
 import logging
+from datetime import datetime
 from typing import Dict, Any
 from urllib.parse import urlparse
 
@@ -11,6 +12,7 @@ import httpx
 from wiki.config import config
 from wiki.schemas import ResourceRecord, ResourceStatus
 from wiki.storage import Storage, write_json
+from wiki.ingest.blog_router import get_blog_extractor
 
 logger = logging.getLogger(__name__)
 
@@ -246,8 +248,17 @@ class WebpageIngestor:
         raw_dir = config.get_data_path("raw", "webpage", domain, content_hash[:8])
         raw_dir.mkdir(parents=True, exist_ok=True)
         
-        # Extract content
-        extraction = self.extract(html, url)
+        # Extract content through platform-aware blog router.
+        extractor = get_blog_extractor(url)
+        blog_extraction = extractor.extract(html, url, status_code=status_code)
+        extraction = {
+            "title": blog_extraction.title,
+            "content": blog_extraction.content_markdown,
+            "author": blog_extraction.author,
+            "published": blog_extraction.published_at,
+            "extractor": blog_extraction.extractor,
+            "requires_human_review": blog_extraction.requires_human_review,
+        }
         
         # Build metadata
         metadata = {
@@ -261,6 +272,7 @@ class WebpageIngestor:
             "title": extraction['title'],
             "author": extraction['author'],
             "published": extraction['published'],
+            **blog_extraction.metadata(),
         }
         
         # Update record
@@ -268,6 +280,23 @@ class WebpageIngestor:
             record.title = extraction['title']
         if extraction['author']:
             record.author = extraction['author']
+        if extraction['published']:
+            try:
+                record.published_at = datetime.fromisoformat(str(extraction["published"])[:10])
+            except (TypeError, ValueError):
+                pass
+        record.extra["platform"] = blog_extraction.platform
+        record.extra["metadata_status"] = blog_extraction.metadata_status
+        if blog_extraction.metadata_failure_reason:
+            record.extra["metadata_failure_reason"] = blog_extraction.metadata_failure_reason
+        if blog_extraction.toc:
+            record.extra["toc"] = blog_extraction.toc
+        if blog_extraction.links:
+            record.extra["links"] = blog_extraction.links
+        if blog_extraction.subtitle:
+            record.extra["subtitle"] = blog_extraction.subtitle
+        if blog_extraction.source_url:
+            record.extra["source_url"] = blog_extraction.source_url
         
         # Save files
         write_json(metadata, "raw", "webpage", domain, content_hash[:8], "metadata.json")
@@ -288,10 +317,10 @@ class WebpageIngestor:
                 logger.warning(f"Metadata enrichment failed for {url}: {e}")
         
         # Special handling for Medium
-        if 'medium.com' in domain:
+        if blog_extraction.platform == "medium":
             if extraction['requires_human_review'] or not extraction['content']:
                 record.status = ResourceStatus.NEEDS_MANUAL_MARKDOWN
-                record.failure_reason = (
+                record.failure_reason = blog_extraction.metadata_failure_reason or (
                     "Medium article may be behind paywall or require login. "
                     f"Please manually export to: {config.get_data_path('inbox', 'markdown', 'medium')}"
                 )

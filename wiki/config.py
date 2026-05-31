@@ -37,6 +37,12 @@ class Config:
     OPENAI_COMPATIBLE_API_KEY: Optional[str]
     OPENAI_COMPATIBLE_MODEL: Optional[str]
 
+    # ASR
+    ASR_PROVIDER: str
+    ASR_MODEL: str
+    ASR_TASK: str
+    ASR_LANGUAGE: Optional[str]
+
     def __init__(self) -> None:
         """Initialize configuration from environment variables."""
         # Data directory - default to ~/llm-wiki-data
@@ -76,6 +82,12 @@ class Config:
         self.OPENAI_COMPATIBLE_BASE_URL = os.getenv("OPENAI_COMPATIBLE_BASE_URL")
         self.OPENAI_COMPATIBLE_API_KEY = os.getenv("OPENAI_COMPATIBLE_API_KEY")
         self.OPENAI_COMPATIBLE_MODEL = os.getenv("OPENAI_COMPATIBLE_MODEL")
+
+        # ASR
+        self.ASR_PROVIDER = os.getenv("ASR_PROVIDER", "whisper_local")
+        self.ASR_MODEL = os.getenv("ASR_MODEL", "base")
+        self.ASR_TASK = os.getenv("ASR_TASK", "transcribe")
+        self.ASR_LANGUAGE = os.getenv("ASR_LANGUAGE") or None
 
     def get_data_path(self, *parts: str) -> Path:
         """Get a path within the data directory."""
@@ -139,9 +151,13 @@ class Config:
             self.get_data_path("raw", "youtube"),
             self.get_data_path("raw", "webpage"),
             self.get_data_path("raw", "markdown"),
+            self.get_data_path("raw", "media"),
+            self.get_data_path("raw", "transcript"),
             self.get_data_path("normalized", "youtube"),
             self.get_data_path("normalized", "webpage"),
             self.get_data_path("normalized", "markdown"),
+            self.get_data_path("normalized", "media"),
+            self.get_data_path("normalized", "transcript"),
             self.get_data_path("processed", "resources"),
             self.get_data_path("processed", "concepts"),
             self.get_data_path("processed", "timeline"),
