@@ -34,6 +34,57 @@ from wiki.site.builder import site_builder
 from wiki.enrich.metadata import youtube_metadata_enricher, webpage_metadata_enricher
 from wiki.resource_utils import is_replaceable_title
 
+
+def normalize_provider_name(name: str | None) -> str:
+    """Normalize a provider name to its canonical underscore-separated form.
+
+    Handles legacy values stored without underscores (e.g. "ollamacloud")
+    as well as the canonical forms (e.g. "ollama_cloud").
+    """
+    if not name:
+        return ""
+    n = name.lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "ollamacloud": "ollama_cloud",
+        "ollama_cloud": "ollama_cloud",
+        "ollamalocal": "ollama_local",
+        "ollama_local": "ollama_local",
+        "ollama-local": "ollama_local",
+        "openai": "openai_compatible",
+        "openai_compatible": "openai_compatible",
+        "openaicompatible": "openai_compatible",
+        "mock": "mock",
+    }
+    return aliases.get(n, n)
+
+
+def stale_reasons(record, target_provider: str, target_model: str) -> list[str]:
+    """Return a list of human-readable reasons why a note is stale.
+
+    A note is current only when ALL conditions are met:
+    - prompt_version == current
+    - llm_provider == target_provider (after normalization)
+    - llm_model == target_model
+    - generated_note_path exists
+    - status != failed_retryable
+    """
+    reasons: list[str] = []
+    if record.status.value == "failed_retryable":
+        reasons.append("failed_retryable")
+    if not record.generated_note_path or not record.generated_note_path.exists():
+        reasons.append("missing_note_path")
+    if record.prompt_version != PROMPT_VERSION:
+        reasons.append(f"prompt_version:{record.prompt_version or 'none'}")
+    rec_prov = normalize_provider_name(record.llm_provider)
+    if target_provider != "mock" and rec_prov == "mock":
+        reasons.append("provider_mismatch:mock→real")
+    elif rec_prov != target_provider:
+        reasons.append(f"provider_mismatch:{rec_prov or 'none'}→{target_provider}")
+    elif target_model and record.llm_model and record.llm_model != target_model:
+        reasons.append(f"model_mismatch:{record.llm_model}→{target_model}")
+    return reasons
+
+
 app = typer.Typer(
     name="wiki",
     help="Harish LLM Wiki - Personal static learning wiki",
@@ -123,30 +174,10 @@ def would_regenerate_note(record, *, force: bool = False) -> bool:
 def is_note_stale(record, target_provider: str, target_model: str) -> bool:
     """Return True if a resource's note is stale relative to a target provider and model.
 
-    A note is current only when ALL of:
-    - prompt_version == current PROMPT_VERSION
-    - llm_provider == target_provider
-    - llm_model == target_model (for mock, target_model must be "mock-model")
-    - generated_note_path exists
-    - status != failed_retryable
-
-    A note is stale if ANY of these conditions fail.
-    Additionally, mock-generated notes are always stale for non-mock targets.
+    Uses normalize_provider_name() so legacy stored values like "ollamacloud"
+    compare equal to canonical "ollama_cloud".
     """
-    if record.status.value == "failed_retryable":
-        return True
-    if not record.generated_note_path or not record.generated_note_path.exists():
-        return True
-    if record.prompt_version != PROMPT_VERSION:
-        return True
-    # Mock-generated notes are stale for any real provider
-    if target_provider != "mock" and record.llm_provider == "mock":
-        return True
-    if record.llm_provider != target_provider:
-        return True
-    if record.llm_model != target_model:
-        return True
-    return False
+    return bool(stale_reasons(record, target_provider, target_model))
 
 
 def generate_derived_views(records=None) -> None:
@@ -512,6 +543,8 @@ def list_stale_notes(
         # Simple prompt-version check
         stale = [r for r in all_records if r.prompt_version != PROMPT_VERSION]
         current = [r for r in all_records if r.prompt_version == PROMPT_VERSION]
+        provider = None
+        target_model = ""
 
     if not stale:
         console.print("[green]All notes are at current version for this provider.[/green]")
@@ -519,10 +552,12 @@ def list_stale_notes(
 
     table = Table(box=box.SIMPLE)
     table.add_column("ID", style="cyan")
-    table.add_column("Type", style="green")
-    table.add_column("Prompt Ver", style="yellow")
+    table.add_column("Status", style="yellow")
     table.add_column("Provider", style="magenta")
     table.add_column("Model", style="dim")
+    table.add_column("PV", style="dim")
+    if provider:
+        table.add_column("Stale reason", style="red")
     table.add_column("Title", style="white")
 
     for record in stale[:limit]:
@@ -530,17 +565,23 @@ def list_stale_notes(
         if len(record.title or "") > 35:
             title += "..."
         pv = record.prompt_version or "none"
-        prov = record.llm_provider or "none"
+        prov = normalize_provider_name(record.llm_provider) or "none"
         model = record.llm_model or "none"
+        status = record.status.value
 
-        table.add_row(
+        row = [
             record.id[:30],
-            record.source_type.value,
-            pv,
+            status,
             prov,
             model[:20],
-            title,
-        )
+            pv,
+        ]
+        if provider:
+            reasons = stale_reasons(record, provider, target_model)
+            row.append(", ".join(reasons))
+        row.append(title)
+
+        table.add_row(*row)
 
     console.print(table)
     console.print(f"\n{len(stale)} stale | {len(current)} current | {len(all_records)} total")
@@ -1031,8 +1072,14 @@ def build_site(
 
 
 @app.command()
-def validate():
-    """Validate the wiki configuration and content."""
+def validate(
+    provider: Optional[str] = typer.Option(None, "--provider", help="Check staleness and provider-specific issues for this provider"),
+):
+    """Validate the wiki configuration and content.
+
+    Use --provider to check for failed_retryable, provider mismatches,
+    missing notes, and contract failures for a specific target provider.
+    """
     console.print("[bold blue]Validating wiki...[/bold blue]\n")
     
     issues = []
@@ -1040,7 +1087,6 @@ def validate():
     # Check .env not committed
     git_dir = Path(__file__).parent.parent / ".git"
     if git_dir.exists():
-        # This is a basic check - a full implementation would use git commands
         pass
     
     # Check provider configuration
@@ -1052,23 +1098,51 @@ def validate():
     
     # Check resources
     records = list(registry.get_all())
-    
+
     for record in records:
-        # Check for missing provenance
-        if record.status == ResourceStatus.PROCESSED:
-            if not record.llm_model:
-                issues.append(("warning", f"{record.id}: Missing LLM model in provenance"))
-            if not record.prompt_version:
-                issues.append(("warning", f"{record.id}: Missing prompt version"))
+        if provider:
+            target_model = ""
+            if provider == "mock":
+                target_model = "mock-model"
+            elif provider == "ollama_cloud":
+                target_model = config.OLLAMA_CLOUD_MODEL or ""
+            elif provider == "ollama_local":
+                target_model = config.OLLAMA_LOCAL_MODEL
+            elif provider == "openai_compatible":
+                target_model = config.OPENAI_COMPATIBLE_MODEL or ""
+
+            reasons = stale_reasons(record, provider, target_model)
+            if reasons:
+                rid = record.id
+                for reason in reasons:
+                    issues.append(("warning", f"{rid}: {reason}"))
+            if record.status.value == "failed_retryable":
+                issues.append(("error", f"{record.id}: failed_retryable status"))
+                if record.failure_reason:
+                    issues.append(("warning", f"{record.id}: failure_reason: {record.failure_reason[:80]}"))
+        else:
+            if record.status == ResourceStatus.PROCESSED:
+                if not record.llm_model:
+                    issues.append(("warning", f"{record.id}: Missing LLM model in provenance"))
+                if not record.prompt_version:
+                    issues.append(("warning", f"{record.id}: Missing prompt version"))
         
         # Check for missing files
         if record.status.value in ["raw_saved", "normalized", "processed"]:
             if record.local_raw_path and not record.local_raw_path.exists():
                 issues.append(("error", f"{record.id}: Missing raw files"))
-    
+
+        # Check for debug failed notes
+        if record.status.value == "failed_retryable":
+            debug_dir = config.get_data_path("debug", "failed_notes", record.id)
+            if debug_dir.exists() and any(debug_dir.iterdir()):
+                issues.append(("warning", f"{record.id}: debug failed_notes directory exists"))
+
     # Print results
     if issues:
-        console.print(f"[yellow]Found {len(issues)} issue(s):[/yellow]\n")
+        error_count = sum(1 for s, _ in issues if s == "error")
+        warning_count = sum(1 for s, _ in issues if s == "warning")
+        console.print(f"[yellow]Found {len(issues)} issue(s):[/yellow]  [red]{error_count} errors[/red], [yellow]{warning_count} warnings[/yellow]\n")
         for severity, message in issues:
             icon = "[red]✗[/red]" if severity == "error" else "[yellow]⚠[/yellow]"
             console.print(f"  {icon} {message}")
@@ -1124,6 +1198,34 @@ def import_markdown(
     registry.update(record)
     
     console.print(f"[green]✓[/green] Imported: {record.id}")
+
+
+@app.command("normalize-registry-providers")
+def normalize_registry_providers():
+    """Normalize stored llm_provider values to canonical form.
+
+    Rewrites legacy values like 'ollamacloud' to 'ollama_cloud',
+    'ollamalocal' to 'ollama_local', and 'openaicompatible' to
+    'openai_compatible'.  Safe and idempotent.
+    """
+    console.print("[bold blue]Normalizing registry provider names...[/bold blue]\n")
+
+    all_records = list(registry.get_all())
+    updated = 0
+
+    for record in all_records:
+        raw = record.llm_provider
+        normalized = normalize_provider_name(raw)
+        if raw and raw != normalized:
+            record.llm_provider = normalized
+            registry.update(record)
+            updated += 1
+            console.print(f"  {raw} → {normalized}  ({record.id})")
+
+    if updated:
+        console.print(f"\n[green]✓[/green] Normalized {updated} record(s)")
+    else:
+        console.print("[green]✓[/green] All provider names already canonical")
 
 
 if __name__ == "__main__":

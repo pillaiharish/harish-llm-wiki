@@ -15,6 +15,10 @@ class OllamaCloudProvider(LLMProvider):
     Uses Ollama Cloud's REST API.
     """
     
+    @property
+    def provider_name(self) -> str:
+        return "ollama_cloud"
+
     def __init__(self, api_key: Optional[str] = None, 
                  base_url: Optional[str] = None,
                  model: Optional[str] = None,

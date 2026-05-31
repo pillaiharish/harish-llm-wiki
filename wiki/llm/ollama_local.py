@@ -15,6 +15,10 @@ class OllamaLocalProvider(LLMProvider):
     Uses local Ollama instance. Requires ollama to be running.
     """
     
+    @property
+    def provider_name(self) -> str:
+        return "ollama_local"
+
     def __init__(self, base_url: Optional[str] = None,
                  model: Optional[str] = None,
                  temperature: float = 0.2) -> None:

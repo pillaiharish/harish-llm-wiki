@@ -19,6 +19,10 @@ class OpenAICompatibleProvider(LLMProvider):
     including GLM Cloud, Kimi, Minimax, OpenRouter, etc.
     """
     
+    @property
+    def provider_name(self) -> str:
+        return "openai_compatible"
+
     def __init__(self, base_url: Optional[str] = None,
                  api_key: Optional[str] = None,
                  model: Optional[str] = None,
