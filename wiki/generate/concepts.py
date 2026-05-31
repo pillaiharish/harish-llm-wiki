@@ -1,14 +1,12 @@
 """Extract and aggregate concepts from resources."""
 
-import json
 import re
 from datetime import datetime
 from pathlib import Path
-from collections import defaultdict
-from typing import Dict, List, Set
+from typing import Dict, List
 
 from wiki.config import config
-from wiki.schemas import Concept, ConceptResourceRef, ResourceRecord, ResourceStatus
+from wiki.schemas import Concept, ConceptResourceRef, ResourceRecord
 from wiki.storage import Storage
 
 
@@ -36,29 +34,29 @@ class ConceptExtractor:
         """
         concepts_found: List[Concept] = []
         
-        # Look for concept mentions in different sections
-        # This is a simplified extraction - real implementation would use LLM
-        
-        # Common LLM/AI concepts to extract
-        concept_keywords = [
-            ("Embeddings", "Dense vector representations of text"),
-            ("RAG", "Retrieval-Augmented Generation"),
-            ("Chunking", "Breaking text into segments"),
-            ("Tokenization", "Splitting text into tokens"),
-            ("Vector Database", "Database optimized for vector similarity search"),
-            ("LLM", "Large Language Model"),
-            ("Transformer", "Neural network architecture"),
-            ("Attention", "Mechanism for focusing on relevant parts"),
-            ("Inference", "Running a model to generate predictions"),
-            ("Fine-tuning", "Adapting a pre-trained model to specific tasks"),
-            ("Prompt Engineering", "Crafting effective prompts for LLMs"),
-            ("Cosine Similarity", "Measure of vector similarity"),
-            ("Retrieval", "Fetching relevant documents"),
-            ("Context Window", "Maximum tokens a model can process"),
-        ]
-        
-        for name, definition in concept_keywords:
-            # Check if concept is mentioned in the note
+        concept_names = self._extract_concept_names(note_content)
+        fallback_definitions = {
+            "Embeddings": "Vector representations used for similarity and retrieval.",
+            "RAG": "Retrieval-Augmented Generation: adding retrieved context before generation.",
+            "Chunking": "Splitting source material into citeable retrieval units.",
+            "Tokenization": "Converting text into model-readable tokens.",
+            "Vector Database": "Storage optimized for vector similarity search.",
+            "LLM": "Large Language Model.",
+            "Transformer": "Neural network architecture built around attention.",
+            "Attention": "Mechanism for weighting relevant parts of context.",
+            "Inference": "Running a trained model to produce outputs.",
+            "Fine-tuning": "Adapting a pre-trained model with additional training.",
+            "Prompt Engineering": "Designing model inputs to shape outputs.",
+            "Cosine Similarity": "Similarity measure commonly used with vectors.",
+            "Retrieval": "Fetching source material relevant to a query.",
+            "Context Window": "The amount of text a model can consider at once.",
+        }
+
+        for name in concept_names:
+            definition = fallback_definitions.get(
+                name,
+                "Mentioned in generated notes. Needs source review before becoming a stable definition.",
+            )
             if name.lower() in note_content.lower():
                 slug = self.slugify(name)
                 
@@ -66,15 +64,25 @@ class ConceptExtractor:
                     name=name,
                     slug=slug,
                     definition=definition,
-                    mental_model=f"{name} is a fundamental concept in modern AI.",
-                    why_relevant=f"Understanding {name} is essential for building AI applications.",
-                    llm_added_clarification=f"This is a placeholder clarification for {name}. Replace with LLM-generated content.",
-                    practical_implementation=f"Practical implementation of {name} concepts.",
+                    mental_model=(
+                        "Review the linked resources for the concrete explanation. "
+                        "This concept page is an index until source-backed synthesis is added."
+                    ),
+                    why_relevant=(
+                        f"{name} appears in Harish's learning notes and may be useful "
+                        "for revision or project work."
+                    ),
+                    llm_added_clarification=(
+                        "Needs review: this page was assembled from generated notes and keyword extraction."
+                    ),
+                    practical_implementation=(
+                        "Use the linked resources to extract a source-backed implementation note."
+                    ),
                     resources=[
                         ConceptResourceRef(
                             resource_id=record.id,
                             resource_title=record.title or "Unknown",
-                            coverage_quality="partial",
+                            coverage_quality="needs_review",
                             learned_at=record.processed_at or datetime.utcnow()
                         )
                     ]
@@ -83,6 +91,67 @@ class ConceptExtractor:
                 concepts_found.append(concept)
         
         return concepts_found
+
+    def _extract_concept_names(self, note_content: str) -> List[str]:
+        """Extract concept candidates from note sections and conservative keyword matches."""
+        names: list[str] = []
+        for section_name in ["Related concepts", "What this resource covers"]:
+            section = self._extract_section(note_content, section_name)
+            for line in section.splitlines():
+                stripped = line.strip()
+                if not stripped.startswith("-"):
+                    continue
+                candidate = stripped.lstrip("-").strip()
+                candidate = re.sub(r"\[[^\]]+\]", "", candidate).strip()
+                candidate = candidate.split(":")[0].strip(" `*")
+                if 2 <= len(candidate) <= 60:
+                    names.append(candidate)
+
+        keyword_names = [
+            "Embeddings", "RAG", "Chunking", "Tokenization", "Vector Database",
+            "LLM", "Transformer", "Attention", "Inference", "Fine-tuning",
+            "Prompt Engineering", "Cosine Similarity", "Retrieval", "Context Window",
+        ]
+        lowered = note_content.lower()
+        for name in keyword_names:
+            if name.lower() in lowered:
+                names.append(name)
+
+        seen = set()
+        unique = []
+        for name in names:
+            key = name.lower()
+            if key not in seen:
+                seen.add(key)
+                unique.append(name)
+        return unique[:20]
+
+    def _extract_section(self, content: str, heading: str) -> str:
+        """Extract section body by Markdown heading."""
+        lines = content.splitlines()
+        target = heading.lower()
+        start = None
+        level = None
+        for index, line in enumerate(lines):
+            stripped = line.strip()
+            if not stripped.startswith("#"):
+                continue
+            text = stripped.lstrip("#").strip().lower()
+            if text == target:
+                start = index + 1
+                level = len(stripped) - len(stripped.lstrip("#"))
+                break
+        if start is None or level is None:
+            return ""
+        end = len(lines)
+        for index in range(start, len(lines)):
+            stripped = lines[index].strip()
+            if stripped.startswith("#"):
+                next_level = len(stripped) - len(stripped.lstrip("#"))
+                if next_level <= level:
+                    end = index
+                    break
+        return "\n".join(lines[start:end])
     
     def aggregate(self, records: List[ResourceRecord]) -> Dict[str, Concept]:
         """Aggregate concepts from all resources.
@@ -173,6 +242,10 @@ class ConceptExtractor:
                 lines.append(f"- {q}")
         
         lines.extend([
+            "",
+            "## Needs Review",
+            "",
+            concept.llm_added_clarification,
             "",
             "## Provenance",
             "",

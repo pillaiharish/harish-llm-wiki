@@ -262,9 +262,20 @@ class WebpageIngestor:
         # Save files
         write_json(metadata, "raw", "webpage", domain, content_hash[:8], "metadata.json")
         Storage.write_text(html, raw_dir / "raw.html")
+        record.local_raw_path = raw_dir
         
         if extraction['content']:
             Storage.write_text(extraction['content'], raw_dir / "extracted.md")
+        
+        # Enrich metadata from OpenGraph/meta tags if title is missing
+        if not record.title:
+            try:
+                from wiki.enrich.metadata import webpage_metadata_enricher
+                record = webpage_metadata_enricher.enrich(record)
+                if record.title:
+                    logger.info(f"Enriched webpage metadata from OG/meta tags: {record.title[:60]}")
+            except Exception as e:
+                logger.warning(f"Metadata enrichment failed for {url}: {e}")
         
         # Special handling for Medium
         if 'medium.com' in domain:
@@ -275,8 +286,6 @@ class WebpageIngestor:
                     f"Please manually export to: {config.get_data_path('inbox', 'markdown', 'medium')}"
                 )
                 logger.warning(f"Medium article may need manual markdown: {url}")
-        
-        record.local_raw_path = raw_dir
         
         return record
     

@@ -158,10 +158,13 @@ class TestExternalDataSeparation:
     """Test that data is properly separated."""
     
     def test_external_data_directory(self):
-        """Test that external data dir is outside git."""
-        # Data dir should be temp dir for tests
-        assert config.LLM_WIKI_DATA_DIR != Path.cwd()
-        assert "test_wiki_data_" in str(config.LLM_WIKI_DATA_DIR)
+        """Test that external data dir is outside git repo."""
+        # The data dir should either be ~/llm-wiki-data or a custom path
+        # It should NOT be inside the project directory
+        project_dir = Path(__file__).parent.parent
+        assert not str(config.LLM_WIKI_DATA_DIR).startswith(str(project_dir))
+        # It should be a valid path
+        assert config.LLM_WIKI_DATA_DIR.is_absolute()
 
 
 class TestSafetyChecks:

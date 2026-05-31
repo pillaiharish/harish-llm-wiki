@@ -1,6 +1,10 @@
 """LLM prompts for note generation."""
 
-PROMPT_VERSION = "harish_llm_wiki_v1"
+import json
+from datetime import datetime
+
+
+PROMPT_VERSION = "harish_llm_wiki_v2"
 
 SYSTEM_PROMPT = """You are generating a personal learning wiki note for Harish.
 
@@ -15,6 +19,7 @@ If something needs external checking, place it under "Needs verification".
 Harish prefers practical, from-first-principles explanations.
 Write in a clear, revision-friendly style inspired by minimal educational notes.
 Do not copy any author's style exactly.
+Prefer simple words, concrete examples, small mechanics, and practical consequences.
 
 Output valid Markdown."""
 
@@ -41,17 +46,21 @@ A sticky sentence that helps Harish remember the concept.
 
 Example: "Embeddings are not meaning; they are compressed coordinates useful for similarity."
 
-### What this resource covers
-Bullet list of concepts actually covered in the source.
+### Source-backed summary
+Summarize only what the source says. Every bullet must include one or more chunk IDs in square brackets, for example [chunk-001].
 
-### Karpathy-style explanation
-Explain from first principles using this flow:
+### What this resource covers
+Bullet list of concepts actually covered in the source. Every bullet must cite chunk IDs.
+
+### First-principles explanation
+Explain from first principles in a Karpathy-inspired educational shape without copying any author's exact style:
 1. Simple intuition
 2. Concrete example
-3. Slightly technical explanation
-4. Why it matters in real systems
-5. Common mistakes
-6. How Harish can use it in his own projects
+3. Mechanics
+4. Small code or pseudocode example when the source supports it
+5. Why it matters in real systems
+6. Common mistakes
+7. How Harish can use it in his own projects
 
 ### Source-backed notes
 Only include claims supported by the source. Each bullet should reference the chunk ID.
@@ -60,13 +69,16 @@ Only include claims supported by the source. Each bullet should reference the ch
 Explain the sequence in which the resource teaches concepts. For videos, use timestamps. For text, use section order.
 
 ### Examples
-Include practical examples with code where useful.
+Include practical examples with code or pseudocode when useful and supported by the source. If the source does not support a code example, say so.
 
 ### Missing pieces from the resource
 What did the source not explain clearly?
 
 ### LLM-added explanations
-Fill conceptual gaps, but clearly mark that this was generated.
+Fill conceptual gaps only. Clearly mark this as generated explanation and do not present it as source-backed.
+
+### Needs verification
+List any claims, extrapolations, or implementation details that need external checking. If none, write "None."
 
 ### Related concepts
 List related concepts that should be linked.
@@ -86,9 +98,11 @@ List the chunk IDs referenced.
 
 ### Provenance
 - Source type: {source_type}
+- Source URL: {source_url}
 - LLM provider: {provider}
 - LLM model: {model}
 - Prompt version: {prompt_version}
+- Generated at: {generated_at}
 
 Return valid Markdown only."""
 
@@ -100,7 +114,7 @@ CONCEPT_EXTRACTION_PROMPT = """Extract concepts from this resource.
 ## Resource Summary
 {summary}
 
-## Karpathy Explanation
+## First-Principles Explanation
 {explanation}
 
 ## Output
@@ -149,14 +163,17 @@ def build_resource_note_prompt(chunks: list, metadata: dict,
                                 provider: str, model: str) -> str:
     """Build the resource note generation prompt."""
     chunks_text = format_chunks_for_prompt(chunks)
+    metadata_json = json.dumps(metadata, indent=2, sort_keys=True, default=str)
     
     return RESOURCE_NOTE_PROMPT.format(
-        metadata=metadata,
+        metadata=metadata_json,
         chunks=chunks_text,
         source_type=metadata.get('source_type', 'unknown'),
+        source_url=metadata.get('url') or metadata.get('source_url') or 'unknown',
         provider=provider,
         model=model,
-        prompt_version=PROMPT_VERSION
+        prompt_version=PROMPT_VERSION,
+        generated_at=datetime.utcnow().isoformat()
     )
 
 

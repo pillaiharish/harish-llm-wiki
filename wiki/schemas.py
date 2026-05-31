@@ -239,7 +239,7 @@ class GeneratedNote(BaseModel):
     summary: str
     concepts: List[str] = Field(default_factory=list)
 
-    # Karpathy-style note sections
+    # First-principles note sections
     why_matters: str
     memory_hook: str
     coverage: List[str] = Field(default_factory=list)

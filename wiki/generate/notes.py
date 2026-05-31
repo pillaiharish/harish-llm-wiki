@@ -4,10 +4,10 @@ import json
 import hashlib
 from datetime import datetime
 from pathlib import Path
-from typing import List, Iterator, Dict, Any
+from typing import List, Iterator, Any
 
 from wiki.config import config
-from wiki.schemas import ResourceRecord, GeneratedNote, ResourceStatus, YouTubeChunk, WebpageChunk, MarkdownChunk
+from wiki.schemas import ResourceRecord, ResourceStatus, YouTubeChunk, WebpageChunk, MarkdownChunk
 from wiki.storage import Storage
 from wiki.llm.base import LLMProvider
 from wiki.llm.prompts import build_resource_note_prompt, SYSTEM_PROMPT, PROMPT_VERSION
@@ -40,6 +40,110 @@ def compute_chunks_hash(chunks: List[Any]) -> str:
     """Compute hash of chunks for caching."""
     content = json.dumps([c.model_dump() for c in chunks], sort_keys=True)
     return hashlib.sha256(content.encode('utf-8')).hexdigest()
+
+
+REQUIRED_NOTE_SECTIONS = [
+    "Why this resource matters",
+    "One-line memory hook",
+    "Source-backed summary",
+    "What this resource covers",
+    "First-principles explanation",
+    "Source-backed notes",
+    "Timeline of ideas",
+    "Examples",
+    "Missing pieces from the resource",
+    "LLM-added explanations",
+    "Needs verification",
+    "Related concepts",
+    "Revision questions",
+    "Harish project connection",
+    "Citations",
+    "Provenance",
+]
+
+
+def _has_markdown_heading(content: str, heading: str) -> bool:
+    """Return True if the Markdown content contains a heading with this text."""
+    target = heading.lower()
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("#"):
+            continue
+        text = stripped.lstrip("#").strip().lower()
+        if text == target:
+            return True
+    return False
+
+
+def _extract_section(content: str, heading: str) -> str:
+    """Extract a Markdown section body by heading text."""
+    lines = content.splitlines()
+    start = None
+    start_level = None
+    target = heading.lower()
+
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped.startswith("#"):
+            continue
+        text = stripped.lstrip("#").strip().lower()
+        if text == target:
+            start = index + 1
+            start_level = len(stripped) - len(stripped.lstrip("#"))
+            break
+
+    if start is None or start_level is None:
+        return ""
+
+    end = len(lines)
+    for index in range(start, len(lines)):
+        stripped = lines[index].strip()
+        if not stripped.startswith("#"):
+            continue
+        level = len(stripped) - len(stripped.lstrip("#"))
+        if level <= start_level:
+            end = index
+            break
+
+    return "\n".join(lines[start:end]).strip()
+
+
+def validate_generated_note_contract(
+    content: str,
+    chunks: List[Any],
+    *,
+    provider: str,
+    model: str,
+    prompt_version: str,
+) -> list[str]:
+    """Validate the generated Markdown follows the wiki note contract."""
+    issues: list[str] = []
+
+    if not content.lstrip().startswith("# "):
+        issues.append("note must start with a level-1 title")
+
+    for section in REQUIRED_NOTE_SECTIONS:
+        if not _has_markdown_heading(content, section):
+            issues.append(f"missing section: {section}")
+
+    chunk_ids = [str(chunk.chunk_id) for chunk in chunks]
+    for section in ["Source-backed summary", "Source-backed notes", "Citations"]:
+        body = _extract_section(content, section)
+        if body and chunk_ids and not any(chunk_id in body for chunk_id in chunk_ids):
+            issues.append(f"{section} must cite source chunk IDs")
+
+    provenance = _extract_section(content, "Provenance")
+    provenance_lower = provenance.lower()
+    required_provenance = [
+        provider.lower(),
+        model.lower(),
+        prompt_version.lower(),
+    ]
+    for value in required_provenance:
+        if value and value not in provenance_lower:
+            issues.append(f"provenance missing value: {value}")
+
+    return issues
 
 
 class NoteGenerator:
@@ -125,6 +229,19 @@ class NoteGenerator:
         
         if not content:
             raise RuntimeError(f"Empty response from LLM for {record.id}")
+
+        contract_issues = validate_generated_note_contract(
+            content,
+            chunks,
+            provider=self.provider.provider_name,
+            model=self.provider.model,
+            prompt_version=PROMPT_VERSION,
+        )
+        if contract_issues:
+            raise RuntimeError(
+                f"Generated note failed contract for {record.id}: "
+                + "; ".join(contract_issues)
+            )
         
         # Compute output hash
         output_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()

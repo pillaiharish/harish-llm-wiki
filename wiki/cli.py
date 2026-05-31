@@ -1,6 +1,5 @@
 """CLI for Harish LLM Wiki."""
 
-import logging
 from pathlib import Path
 from typing import Optional, List
 
@@ -10,9 +9,9 @@ from rich.table import Table
 from rich import box
 
 from wiki.config import config
-from wiki.schemas import ResourceStatus, BatchAddResult
+from wiki.schemas import ResourceStatus
 from wiki.registry import registry
-from wiki.dedupe import deduplicator, ResourceIdentity
+from wiki.dedupe import deduplicator
 from wiki.ingest.youtube import youtube_ingestor
 from wiki.ingest.webpage import webpage_ingestor
 from wiki.ingest.markdown import markdown_ingestor
@@ -24,12 +23,14 @@ from wiki.llm.ollama_local import OllamaLocalProvider
 from wiki.llm.openai_compatible import OpenAICompatibleProvider
 from wiki.llm.mock import MockProvider
 from wiki.llm.base import LLMProvider
-from wiki.generate.notes import get_note_generator
+from wiki.generate.notes import get_note_generator, load_chunks, compute_chunks_hash
+from wiki.llm.prompts import PROMPT_VERSION
 from wiki.generate.concepts import concept_extractor
 from wiki.generate.timeline import timeline_generator
 from wiki.generate.gaps import gaps_generator
 from wiki.generate.tags import tags_generator
 from wiki.site.builder import site_builder
+from wiki.enrich.metadata import youtube_metadata_enricher, webpage_metadata_enricher
 
 app = typer.Typer(
     name="wiki",
@@ -53,6 +54,37 @@ def get_provider() -> LLMProvider:
         return MockProvider()
     else:
         raise ValueError(f"Unknown LLM provider: {provider_name}")
+
+
+def configured_provider_model() -> tuple[str, str]:
+    """Return provider/model from config without creating network clients."""
+    if config.LLM_PROVIDER == "ollama_cloud":
+        return config.LLM_PROVIDER, config.OLLAMA_CLOUD_MODEL or ""
+    if config.LLM_PROVIDER == "ollama_local":
+        return config.LLM_PROVIDER, config.OLLAMA_LOCAL_MODEL
+    if config.LLM_PROVIDER == "openai_compatible":
+        return config.LLM_PROVIDER, config.OPENAI_COMPATIBLE_MODEL or ""
+    if config.LLM_PROVIDER == "mock":
+        return "mock", "mock-model"
+    return config.LLM_PROVIDER, ""
+
+
+def would_regenerate_note(record, *, force: bool = False) -> bool:
+    """Estimate whether note generation would call the LLM."""
+    if force:
+        return True
+    if not record.generated_note_path or not record.generated_note_path.exists():
+        return True
+    if record.prompt_version != PROMPT_VERSION:
+        return True
+    _, configured_model = configured_provider_model()
+    if configured_model and record.llm_model != configured_model:
+        return True
+    if record.local_normalized_path:
+        chunks = list(load_chunks(Path(record.local_normalized_path)))
+        if chunks and record.source_chunks_hash != compute_chunks_hash(chunks):
+            return True
+    return False
 
 
 @app.command()
@@ -103,7 +135,7 @@ def add_resource(
         # Update timestamps if it's a YouTube video with timestamp
         if identity.start_time_seconds and existing.extra.get('important_timestamps'):
             registry.update_timestamps(existing.id, identity.start_time_seconds)
-            console.print(f"  Updated timestamps")
+            console.print("  Updated timestamps")
         
         return
     
@@ -197,7 +229,7 @@ def add_batch(
             new += 1  # For dry-run count
     
     # Print results
-    console.print(f"\n[bold]Batch Results:[/bold]")
+    console.print("\n[bold]Batch Results:[/bold]")
     console.print(f"  Total lines: {total}")
     console.print(f"  Valid URLs: {valid}")
     console.print(f"  [green]New resources: {new}[/green]")
@@ -227,7 +259,7 @@ def add_batch(
         
         console.print("\n[dim]No changes made (dry-run mode)[/dim]")
     elif errors:
-        console.print(f"\n[red]Errors:[/red]")
+        console.print("\n[red]Errors:[/red]")
         for error in errors[:10]:
             console.print(f"  - {error}")
 
@@ -311,6 +343,98 @@ def list_pending():
 
 
 @app.command()
+def enrich_metadata(
+    resource_id: Optional[str] = typer.Option(
+        None,
+        "--resource-id",
+        "--resource",
+        "-r",
+        help="Specific resource ID to enrich",
+    ),
+    limit: Optional[int] = typer.Option(None, "--limit", "-n", help="Limit number of resources to enrich"),
+    force: bool = typer.Option(False, "--force", help="Re-fetch metadata even if already enriched"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be enriched without making changes"),
+):
+    """Enrich resource metadata (titles, authors, descriptions) from external sources.
+    
+    For YouTube: uses yt-dlp to fetch video metadata.
+    For webpages: extracts OpenGraph and meta tags from cached HTML.
+    """
+    console.print("[bold blue]Enriching metadata...[/bold blue]\n")
+    
+    if dry_run:
+        console.print("[yellow]DRY RUN - No changes will be made[/yellow]\n")
+    
+    # Get resources to enrich
+    if resource_id:
+        record = registry.get_by_id(resource_id)
+        if not record:
+            console.print(f"[red]Resource not found: {resource_id}[/red]")
+            raise typer.Exit(1)
+        records = [record]
+    else:
+        # Get all resources that might need enrichment
+        all_records = list(registry.get_all())
+        # Filter to those missing title or with empty title
+        records = [r for r in all_records if not r.title or r.title == "Untitled"]
+    
+    if not records:
+        console.print("[dim]No resources need metadata enrichment.[/dim]")
+        return
+    
+    # Apply limit
+    total = len(records)
+    if limit and limit < total:
+        records = records[:limit]
+    
+    console.print(f"Found {total} resource(s) needing enrichment")
+    if limit:
+        console.print(f"Processing: {len(records)} (limited by --limit)")
+    console.print()
+    
+    enriched = 0
+    failed = 0
+    skipped = 0
+    
+    for record in records:
+        console.print(f"Enriching: [cyan]{record.id}[/cyan]")
+        
+        if dry_run:
+            console.print(f"  [dim]Would fetch metadata for {record.source_type.value}[/dim]")
+            continue
+        
+        try:
+            if record.source_type.value == "youtube":
+                record = youtube_metadata_enricher.enrich(record, force=force)
+            elif record.source_type.value == "webpage":
+                record = webpage_metadata_enricher.enrich(record, force=force)
+            else:
+                console.print(f"  [dim]No metadata enricher for {record.source_type.value}[/dim]")
+                skipped += 1
+                continue
+            
+            if record.title:
+                console.print(f"  [green]✓[/green] Title: {record.title[:60]}")
+                enriched += 1
+            else:
+                console.print("  [yellow]⚠[/yellow] No title found")
+                failed += 1
+            
+            registry.update(record)
+        except Exception as e:
+            console.print(f"  [red]✗ Failed: {e}[/red]")
+            failed += 1
+    
+    console.print("\n[bold]Summary:[/bold]")
+    console.print(f"  Enriched: {enriched}")
+    console.print(f"  Failed: {failed}")
+    if skipped:
+        console.print(f"  Skipped: {skipped}")
+    if dry_run:
+        console.print("\n[dim]No changes made (dry-run mode)[/dim]")
+
+
+@app.command()
 def process_new(
     force: bool = typer.Option(False, "--force", help="Force reprocessing"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be done without modifying"),
@@ -323,8 +447,17 @@ def process_new(
     if dry_run:
         console.print("[yellow]DRY RUN - No changes will be made[/yellow]\n")
     
-    # Get pending resources
-    records = list(registry.get_pending())
+    # Get resources
+    if force:
+        records = [
+            r for r in registry.get_all()
+            if r.status not in {
+                ResourceStatus.DUPLICATE_SKIPPED,
+                ResourceStatus.FAILED_PERMANENT,
+            }
+        ]
+    else:
+        records = list(registry.get_pending())
     
     if not records:
         console.print("[dim]No new resources to process.[/dim]")
@@ -342,7 +475,7 @@ def process_new(
     
     # Safety check for real LLM calls
     if not dry_run and config.LLM_PROVIDER != "mock":
-        needs_llm = sum(1 for r in records if not r.generated_note_path)
+        needs_llm = sum(1 for r in records if would_regenerate_note(r, force=force))
         if needs_llm > 2 and not yes:
             console.print(f"[yellow]Warning:[/yellow] About to process {needs_llm} resources using {config.LLM_PROVIDER}")
             console.print("This may consume cloud tokens.")
@@ -377,9 +510,9 @@ def process_new(
             console.print("  [dim]  - Would normalize and chunk[/dim]")
             would_normalize += 1
             
-            # Check if note exists (for cache hit estimation)
-            if record.generated_note_path and record.generated_note_path.exists():
-                console.print("  [dim]  - Note exists, would check cache[/dim]")
+            # Check if note exists and cache inputs still match
+            if not would_regenerate_note(record, force=force):
+                console.print("  [dim]  - Expected LLM cache hit[/dim]")
                 would_cache_hit += 1
             else:
                 console.print("  [dim]  - Would call LLM ({})[/dim]".format(config.LLM_PROVIDER))
@@ -404,6 +537,22 @@ def process_new(
             registry.update_status(record.id, ResourceStatus.FAILED_RETRYABLE, str(e))
             continue
         
+        # Step 1.5: Enrich metadata
+        try:
+            if record.source_type.value == "youtube":
+                record = youtube_metadata_enricher.enrich(record)
+                if record.title:
+                    console.print(f"  [dim]ℹ[/dim] Title: {record.title[:60]}")
+            elif record.source_type.value == "webpage":
+                record = webpage_metadata_enricher.enrich(record)
+                if record.title:
+                    console.print(f"  [dim]ℹ[/dim] Title: {record.title[:60]}")
+            
+            registry.update(record)
+        except Exception as e:
+            console.print(f"  [yellow]⚠ Metadata enrichment failed: {e}[/yellow]")
+            # Continue even if metadata enrichment fails
+        
         # Step 2: Normalize
         try:
             if record.source_type.value == "youtube":
@@ -426,7 +575,10 @@ def process_new(
                 provider = get_provider()
             
             generator = get_note_generator(provider)
-            result = generator.generate(record)
+            if force:
+                record.prompt_hash = None
+                record.source_chunks_hash = None
+            generator.generate(record)
             
             if record.status == ResourceStatus.LLM_CACHE_HIT:
                 console.print("  [dim]✓ Cache hit (no LLM call)[/dim]")
@@ -445,7 +597,7 @@ def process_new(
         record.status = ResourceStatus.PROCESSED
         registry.update(record)
         
-        console.print(f"  [green]✓[/green] Complete\n")
+        console.print("  [green]✓[/green] Complete\n")
     
     if dry_run:
         console.print("\n[bold]Dry-Run Summary:[/bold]")
@@ -502,7 +654,7 @@ def generate_notes(
         
         # Safety check for real LLM calls
         if config.LLM_PROVIDER != "mock":
-            needs_llm = sum(1 for r in eligible if not (r.generated_note_path and r.generated_note_path.exists()))
+            needs_llm = sum(1 for r in eligible if would_regenerate_note(r))
             if needs_llm > 2 and not yes:
                 console.print(f"[yellow]Warning:[/yellow] About to generate notes for {needs_llm} resources using {config.LLM_PROVIDER}")
                 console.print("This may consume cloud tokens.")
@@ -556,8 +708,8 @@ def build_site():
     console.print(f"  [green]✓[/green] Site built: {site_path}")
     
     console.print("\n[bold green]Site build complete![/bold green]")
-    console.print(f"\nTo view locally:")
-    console.print(f"  cd site && npm install && npm run docs:dev")
+    console.print("\nTo view locally:")
+    console.print("  cd site && npm install && npm run docs:dev")
 
 
 @app.command()
@@ -576,7 +728,7 @@ def validate():
     # Check provider configuration
     if config.LLM_PROVIDER == "ollama_cloud":
         if not config.OLLAMA_CLOUD_API_KEY:
-            issues.append(("error", "OLLAMA_CLOUD_API_KEY not set"))
+            issues.append(("error", "OLLAMA_API_KEY or OLLAMA_CLOUD_API_KEY not set"))
         if not config.OLLAMA_CLOUD_MODEL:
             issues.append(("error", "OLLAMA_CLOUD_MODEL not set"))
     

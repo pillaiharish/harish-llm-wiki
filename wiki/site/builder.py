@@ -1,9 +1,8 @@
 """Build VitePress site from generated content."""
 
 import shutil
-import json
 from pathlib import Path
-from typing import List, Iterator
+from typing import List
 
 from wiki.config import config
 from wiki.schemas import ResourceRecord, ResourceStatus
@@ -143,7 +142,12 @@ Do not publish publicly unless content is appropriate for public sharing.
                 
                 # Copy note content
                 note_content = Storage.read_text(record.generated_note_path)
-                Storage.write_text(note_content, resource_path)
+                Storage.write_text(
+                    self._format_resource_header(record)
+                    + "\n\n"
+                    + self._strip_duplicate_title(note_content),
+                    resource_path,
+                )
                 
                 link = f"[{title}](./{resource_filename})"
             else:
@@ -244,6 +248,45 @@ Do not publish publicly unless content is appropriate for public sharing.
                     shutil.copy(item, dest)
         
         print(f"Site generated in: {self.repo_site_dir}")
+
+    def _format_resource_header(self, record: ResourceRecord) -> str:
+        """Format source metadata shown before generated notes."""
+        title = record.title or record.id
+        source_url = record.normalized_url or record.original_url
+        lines = [
+            "---",
+            f'title: "{self._yaml_escape(title)}"',
+            "---",
+            "",
+            f"# {title}",
+            "",
+            "| Field | Value |",
+            "|---|---|",
+            f"| Source type | {record.source_type.value} |",
+            f"| Author/channel | {self._table_value(record.author or 'Unknown')} |",
+            f"| Source URL | {self._table_value(source_url)} |",
+            f"| LLM provider | {self._table_value(record.llm_provider or 'Unknown')} |",
+            f"| LLM model | {self._table_value(record.llm_model or 'Unknown')} |",
+            f"| Prompt version | {self._table_value(record.prompt_version or 'Unknown')} |",
+        ]
+        if record.published_at:
+            lines.append(f"| Published/uploaded | {record.published_at.date().isoformat()} |")
+        return "\n".join(lines)
+
+    def _strip_duplicate_title(self, content: str) -> str:
+        """Remove the generated note H1 because the resource page adds metadata first."""
+        lines = content.splitlines()
+        if lines and lines[0].startswith("# "):
+            return "\n".join(lines[1:]).lstrip()
+        return content
+
+    def _table_value(self, value: str) -> str:
+        """Escape a value for a Markdown table."""
+        return str(value).replace("|", "\\|")
+
+    def _yaml_escape(self, value: str) -> str:
+        """Escape a string for a simple double-quoted YAML scalar."""
+        return str(value).replace("\\", "\\\\").replace('"', '\\"')
 
 
 # Global instance

@@ -20,6 +20,7 @@ class Config:
     LLM_PROVIDER: str
 
     # Ollama Cloud
+    OLLAMA_API_KEY: Optional[str]
     OLLAMA_CLOUD_API_KEY: Optional[str]
     OLLAMA_CLOUD_BASE_URL: str
     OLLAMA_CLOUD_MODEL: Optional[str]
@@ -43,7 +44,8 @@ class Config:
         self.LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama_cloud")
 
         # Ollama Cloud
-        self.OLLAMA_CLOUD_API_KEY = os.getenv("OLLAMA_CLOUD_API_KEY")
+        self.OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY")
+        self.OLLAMA_CLOUD_API_KEY = self.OLLAMA_API_KEY or os.getenv("OLLAMA_CLOUD_API_KEY")
         self.OLLAMA_CLOUD_BASE_URL = os.getenv(
             "OLLAMA_CLOUD_BASE_URL", "https://ollama.com/api"
         )
@@ -77,7 +79,10 @@ class Config:
         # Validate LLM provider configuration
         if self.LLM_PROVIDER == "ollama_cloud":
             if not self.OLLAMA_CLOUD_API_KEY:
-                errors.append("OLLAMA_CLOUD_API_KEY is required when LLM_PROVIDER=ollama_cloud")
+                errors.append(
+                    "OLLAMA_API_KEY or OLLAMA_CLOUD_API_KEY is required when "
+                    "LLM_PROVIDER=ollama_cloud"
+                )
             if not self.OLLAMA_CLOUD_MODEL:
                 errors.append("OLLAMA_CLOUD_MODEL is required when LLM_PROVIDER=ollama_cloud")
 

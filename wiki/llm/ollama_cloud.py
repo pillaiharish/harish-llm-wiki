@@ -1,6 +1,6 @@
 """Ollama Cloud provider implementation."""
 
-import json
+import time
 from typing import Optional
 
 import httpx
@@ -33,7 +33,7 @@ class OllamaCloudProvider(LLMProvider):
         self._model = model or config.OLLAMA_CLOUD_MODEL
         
         if not self.api_key:
-            raise ValueError("OLLAMA_CLOUD_API_KEY is required")
+            raise ValueError("OLLAMA_API_KEY or OLLAMA_CLOUD_API_KEY is required")
         if not self._model:
             raise ValueError("OLLAMA_CLOUD_MODEL is required")
         
@@ -46,6 +46,7 @@ class OllamaCloudProvider(LLMProvider):
                 "Content-Type": "application/json",
             }
         )
+        self.max_retries = 3
     
     def generate(self, prompt: str, *, system: Optional[str] = None,
                  temperature: Optional[float] = None) -> str:
@@ -67,30 +68,37 @@ class OllamaCloudProvider(LLMProvider):
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
         
-        # Make request
-        try:
-            response = self.client.post(
-                f"{self.base_url}/chat",
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "stream": False,
-                    "options": {
-                        "temperature": temp,
+        last_error: Exception | None = None
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                response = self.client.post(
+                    f"{self.base_url}/chat",
+                    json={
+                        "model": self.model,
+                        "messages": messages,
+                        "stream": False,
+                        "options": {
+                            "temperature": temp,
+                        }
                     }
-                }
-            )
-            response.raise_for_status()
-            data = response.json()
-            
-            return data.get("message", {}).get("content", "")
-            
-        except httpx.HTTPStatusError as e:
-            raise RuntimeError(
-                f"Ollama Cloud API error {e.response.status_code}: {e.response.text}"
-            )
-        except httpx.RequestError as e:
-            raise RuntimeError(f"Ollama Cloud request failed: {e}")
+                )
+                response.raise_for_status()
+                data = response.json()
+                return data.get("message", {}).get("content", "")
+            except httpx.HTTPStatusError as e:
+                last_error = e
+                if e.response.status_code < 500 or attempt == self.max_retries:
+                    raise RuntimeError(
+                        f"Ollama Cloud API error {e.response.status_code}: {e.response.text}"
+                    )
+            except httpx.RequestError as e:
+                last_error = e
+                if attempt == self.max_retries:
+                    raise RuntimeError(f"Ollama Cloud request failed: {e}")
+
+            time.sleep(2 ** (attempt - 1))
+
+        raise RuntimeError(f"Ollama Cloud request failed: {last_error}")
     
     def __del__(self) -> None:
         """Cleanup HTTP client."""

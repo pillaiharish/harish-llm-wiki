@@ -1,6 +1,6 @@
 """Mock LLM provider for testing."""
 
-import hashlib
+import json
 from typing import Optional
 
 from wiki.llm.base import LLMProvider
@@ -29,40 +29,49 @@ class MockProvider(LLMProvider):
         
         # Extract resource info from prompt
         resource_title = self._extract_title(prompt)
-        chunk_count = self._extract_chunk_count(prompt)
+        chunk_ids = self._extract_chunk_ids(prompt)
         
         # Generate deterministic mock content
-        return self._generate_mock_note(resource_title, chunk_count)
+        return self._generate_mock_note(resource_title, chunk_ids)
     
     def _extract_title(self, prompt: str) -> str:
         """Extract title from prompt."""
-        # Look for title in metadata section
-        if '"title":' in prompt:
-            start = prompt.find('"title":') + 9
-            end = prompt.find('"', start + 1)
-            if end > start:
-                return prompt[start:end].strip()
-        return "Unknown Resource"
+        metadata = self._extract_metadata(prompt)
+        title = metadata.get("title")
+        if title:
+            return str(title)
+        return "Untitled Resource"
     
-    def _extract_chunk_count(self, prompt: str) -> int:
-        """Extract chunk count from prompt."""
-        if '"chunk_count":' in prompt:
-            start = prompt.find('"chunk_count":') + 14
-            end = prompt.find(',', start)
-            if end > start:
-                try:
-                    return int(prompt[start:end].strip())
-                except ValueError:
-                    pass
-        return 3  # Default
+    def _extract_chunk_ids(self, prompt: str) -> list[str]:
+        """Extract real chunk IDs from the prompt."""
+        chunk_ids: list[str] = []
+        for line in prompt.splitlines():
+            if line.startswith("### Chunk ID:"):
+                chunk_id = line.split(":", 1)[1].strip()
+                if chunk_id:
+                    chunk_ids.append(chunk_id)
+        return chunk_ids or ["chunk-001", "chunk-002", "chunk-003"]
+
+    def _extract_metadata(self, prompt: str) -> dict:
+        """Extract JSON metadata from the resource note prompt."""
+        marker = "## Source Metadata"
+        chunks_marker = "## Source Chunks"
+        if marker not in prompt or chunks_marker not in prompt:
+            return {}
+
+        metadata_text = prompt.split(marker, 1)[1].split(chunks_marker, 1)[0].strip()
+        try:
+            return json.loads(metadata_text)
+        except json.JSONDecodeError:
+            return {}
     
-    def _generate_mock_note(self, title: str, chunk_count: int) -> str:
+    def _generate_mock_note(self, title: str, chunk_ids: list[str]) -> str:
         """Generate deterministic mock learning note."""
         # Generate mock citations
-        citations = "\n".join([
-            f"- Mock point from chunk {i+1}. Citation: chunk-{i+1:03d}"
-            for i in range(min(chunk_count, 5))
-        ])
+        citations = "\n".join(
+            f"- Mock point from source chunk. Citation: [{chunk_id}]"
+            for chunk_id in chunk_ids[:5]
+        )
         
         return f"""# {title}
 
@@ -83,7 +92,11 @@ the site layout, navigation, and structure without consuming cloud LLM tokens.
 - Common pitfalls and best practices
 - Real-world applications
 
-## Karpathy-style explanation
+## Source-backed summary
+
+{citations}
+
+## First-principles explanation
 
 ### Simple intuition
 
@@ -170,6 +183,10 @@ covered in the source material. In a real note, this would:
 **Important**: Always verify LLM-added explanations against authoritative 
 sources before relying on them for critical decisions.
 
+## Needs verification
+
+- Mock notes are placeholders and should be replaced with real source-specific notes before serious use.
+
 ## Related concepts
 
 - test-concept
@@ -201,7 +218,7 @@ This resource connects to several active projects:
 
 - **Source type**: Mock (for testing)
 - **Original URL**: See resource metadata
-- **Local raw file**: `/Users/harishkumarpillai/llm-wiki-data/raw/...`
+- **Local raw file**: `~/llm-wiki-data/raw/...`
 - **Processed on**: 2026-05-30
 - **LLM provider**: {self.provider_name}
 - **LLM model**: {self.model}

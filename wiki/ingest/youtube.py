@@ -161,6 +161,16 @@ class YouTubeIngestor:
         vtt_path = raw_dir / "transcript.vtt"
         Storage.write_text(vtt_content, vtt_path)
         
+        # Enrich metadata with yt-dlp (title, channel, description, etc.)
+        try:
+            from wiki.enrich.metadata import youtube_metadata_enricher
+            record = youtube_metadata_enricher.enrich(record)
+            if record.title:
+                logger.info(f"Enriched metadata for {video_id}: {record.title}")
+        except Exception as e:
+            logger.warning(f"Metadata enrichment failed for {video_id}: {e}")
+            # Continue without metadata - transcript is still available
+        
         # Update record
         record.local_raw_path = raw_dir
         

@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "Harish Kumar Pillai", email = "harish@example.com"}
+    {name = "Harishkumar Pillai", email = "harish@example.com"}
 ]
 keywords = ["llm", "wiki", "learning", "knowledge-management"]
 classifiers = [
@@ -32,6 +32,7 @@ dependencies = [
     "pyyaml>=6.0.1",
     "rich>=13.0.0",
     "youtube-transcript-api>=0.6.0",
+    "yt-dlp>=2024.1.0",
     "trafilatura>=1.6.0",
     "readability-lxml>=0.8.1",
     "markdownify>=0.11.0",

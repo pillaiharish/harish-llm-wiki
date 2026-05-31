@@ -18,7 +18,7 @@ Harish LLM Wiki is a Python pipeline that:
 - **Blog Scraping**: Public webpage extraction (no paywall bypass)
 - **Markdown Import**: Manual import of articles and notes
 - **Deduplication**: Detects duplicates by URL/content hash
-- **LLM Notes**: Generates Karpathy-style explanations with provenance
+- **LLM Notes**: Generates Karpathy-inspired first-principles explanations with provenance
 - **Citations**: Timestamp citations for YouTube, section/paragraph for text
 - **Timeline**: Chronological learning trail
 - **Tags**: Browse resources by topic
@@ -50,11 +50,11 @@ Edit `.env` with your settings:
 
 ```env
 # Required: Data directory
-LLM_WIKI_DATA_DIR=/Users/harishkumarpillai/llm-wiki-data
+LLM_WIKI_DATA_DIR=~/llm-wiki-data
 
 # Default provider (uses Ollama Cloud API)
 LLM_PROVIDER=ollama_cloud
-OLLAMA_CLOUD_API_KEY=your_api_key_here
+OLLAMA_API_KEY=your_api_key_here
 OLLAMA_CLOUD_MODEL=qwen2.5:7b
 ```
 
@@ -218,9 +218,11 @@ Requires API key from [ollama.com](https://ollama.com/settings/api):
 
 ```env
 LLM_PROVIDER=ollama_cloud
-OLLAMA_CLOUD_API_KEY=your_api_key
+OLLAMA_API_KEY=your_api_key
 OLLAMA_CLOUD_MODEL=qwen2.5:7b
 ```
+
+`OLLAMA_API_KEY` is the preferred variable. `OLLAMA_CLOUD_API_KEY` is still accepted as a backward-compatible alias.
 
 ### Mock Provider (For Testing)
 
@@ -320,6 +322,8 @@ harish-llm-wiki/
 ├── processed/           # Generated LLM notes
 └── site_generated/      # Generated VitePress content
 ```
+
+`python -m wiki build-site` mirrors generated Markdown into ignored `site/docs` paths so VitePress can serve it locally. Those files are reproducible from `~/llm-wiki-data` and should remain uncommitted.
 
 **Important**: Raw transcripts, HTML, and LLM-generated notes contain copyrighted content. Do not publish the external data directory publicly.
 
