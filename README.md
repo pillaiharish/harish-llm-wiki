@@ -40,6 +40,27 @@ source .venv/bin/activate
 pip install -e .
 ```
 
+Optional installs:
+
+```bash
+# Development/test tools
+pip install -e ".[dev]"
+
+# Local Whisper ASR only
+pip install -e ".[asr-whisper]"
+
+# faster-whisper ASR only
+pip install -e ".[asr-faster-whisper]"
+
+# All local media transcription providers
+pip install -e ".[media]"
+
+# All optional runtime providers
+pip install -e ".[all]"
+```
+
+The base install is enough for URLs, Markdown, Medium Markdown, imported transcripts, mock LLM runs, and Ollama Cloud note generation. Install an ASR extra only when you want to transcribe local audio/video files on this machine.
+
 ### 2. Configuration
 
 ```bash
@@ -462,6 +483,24 @@ The original resource did not explain hybrid retrieval.
 
 Providers: `ollama_cloud` (default) | `ollama_local` | `openai_compatible` | `mock`
 
+## Dependency Extras
+
+The optional dependency groups are intentionally small:
+
+- `.[dev]`: test/lint tooling (`pytest`, `ruff`)
+- `.[asr-whisper]`: local OpenAI Whisper transcription
+- `.[asr-faster-whisper]`: local faster-whisper transcription
+- `.[media]`: both local ASR providers
+- `.[all]`: all optional runtime providers
+
+`ffmpeg` is still a system dependency, not a Python package. Check it with:
+
+```bash
+ffmpeg -version
+```
+
+Install it with `brew install ffmpeg` on macOS or `sudo apt-get install ffmpeg` on Ubuntu.
+
 ## Medium
 
 Public Medium URLs are fetched only if publicly accessible. The wiki does not bypass login walls or paywalls. If a Medium page is not fully available, it is marked `needs_manual_markdown` and you can import copied/exported Markdown:
@@ -472,6 +511,8 @@ python -m wiki import-medium-markdown --file article.md --original-url "https://
 python -m wiki process-new --only-stale --skip-ingest --provider ollama_cloud --resource-id medium_markdown:<hash> --yes
 python -m wiki build-site --refresh
 ```
+
+The imported resource ID is printed by the command as `medium_markdown:<hash>`. Use that exact ID for `process-new` if you want to process only that article.
 
 ## Local Video/Audio
 
@@ -484,7 +525,9 @@ python -m wiki process-new --only-stale --skip-ingest --provider ollama_cloud --
 python -m wiki build-site --refresh
 ```
 
-Transcription uses `ffmpeg` to normalize audio to 16 kHz mono WAV. Install it with `brew install ffmpeg` on macOS or `sudo apt-get install ffmpeg` on Ubuntu. Local Whisper support requires `pip install -U openai-whisper`; faster-whisper requires `pip install -U faster-whisper`.
+The `add-media` command prints the `media:<hash>` resource ID. Use that exact ID in `transcribe-media` and `process-new`.
+
+Transcription uses `ffmpeg` to normalize audio to 16 kHz mono WAV. Local Whisper support requires `pip install -e ".[asr-whisper]"`; faster-whisper requires `pip install -e ".[asr-faster-whisper]"`. For a dependency-free smoke test of the media pipeline, use `--provider mock`.
 
 ## Existing Transcript
 
@@ -495,6 +538,8 @@ python -m wiki import-transcript --file transcript.txt --source-title "My Lectur
 python -m wiki process-new --only-stale --skip-ingest --provider ollama_cloud --resource-id transcript:<hash> --yes
 python -m wiki build-site --refresh
 ```
+
+The `import-transcript` command prints the `transcript:<hash>` resource ID. Imported transcripts do not require Whisper or ffmpeg.
 
 ## Makefile Commands
 
