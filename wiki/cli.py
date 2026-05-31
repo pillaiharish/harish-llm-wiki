@@ -5,6 +5,10 @@ from typing import Optional, List
 from datetime import datetime
 import hashlib
 import json
+import shutil
+import sys
+import tarfile
+from collections import Counter
 
 import typer
 from rich.console import Console
@@ -39,9 +43,13 @@ from wiki.generate.timeline import timeline_generator
 from wiki.generate.gaps import gaps_generator
 from wiki.generate.tags import tags_generator
 from wiki.generate.topics import topic_generator
+from wiki.generate.learn import learn_generator
+from wiki.generate.review import review_generator
+from wiki.generate.search import search_index_generator
+from wiki.generate.revision import revision_generator
 from wiki.site.builder import site_builder
 from wiki.enrich.metadata import youtube_metadata_enricher, webpage_metadata_enricher
-from wiki.resource_utils import is_replaceable_title
+from wiki.resource_utils import is_replaceable_title, topic_matches
 from wiki.storage import Storage
 
 
@@ -219,6 +227,26 @@ def generate_derived_views(records=None) -> None:
     gaps = gaps_generator.generate(records)
     gaps_generator.save(gaps)
     console.print("  [green]✓[/green] Gaps saved")
+
+    console.print("Generating learn chapters...")
+    learn = learn_generator.generate(records)
+    learn_generator.save(learn)
+    console.print("  [green]✓[/green] Learn chapters saved")
+
+    console.print("Generating review pages...")
+    review = review_generator.generate(records)
+    review_generator.save(review)
+    console.print("  [green]✓[/green] Review pages saved")
+
+    console.print("Generating search indexes...")
+    indexes = search_index_generator.generate(records)
+    search_index_generator.save(indexes)
+    console.print("  [green]✓[/green] Search indexes saved")
+
+    console.print("Generating revision pages...")
+    revision = revision_generator.generate(records)
+    revision_generator.save(revision)
+    console.print("  [green]✓[/green] Revision pages saved")
 
 
 def quality_gate_issues(records) -> list[str]:
@@ -1037,6 +1065,67 @@ def regenerate_views():
     console.print(f"\n[green]✓[/green] Derived views regenerated: {site_path}")
 
 
+@app.command("generate-review-pages")
+def generate_review_pages():
+    """Generate static review dashboard pages without LLM calls."""
+    records = list(registry.get_all())
+    data = review_generator.generate(records)
+    path = review_generator.save(data)
+    console.print(f"[green]✓[/green] Review pages generated: {path}")
+
+
+@app.command("generate-search-index")
+def generate_search_index():
+    """Generate static search indexes, Explorer, and Sources pages."""
+    records = list(registry.get_all())
+    indexes = search_index_generator.generate(records)
+    path = search_index_generator.save(indexes)
+    console.print(f"[green]✓[/green] Search index generated: {path}")
+
+
+@app.command("generate-revision")
+def generate_revision():
+    """Generate revision pages and deterministic flashcards."""
+    records = list(registry.get_all())
+    data = revision_generator.generate(records)
+    path = revision_generator.save(data)
+    console.print(f"[green]✓[/green] Revision pages generated: {path}")
+
+
+@app.command("generate-flashcards")
+def generate_flashcards(
+    provider: str = typer.Option("mock", "--provider", help="Provider for optional future generation"),
+    topic: Optional[str] = typer.Option(None, "--topic", help="Optional topic slug"),
+):
+    """Generate deterministic flashcards; real providers are not called by default."""
+    if provider != "mock":
+        console.print("[yellow]Real-provider flashcard generation is not automatic; using deterministic extraction.[/yellow]")
+    records = list(registry.get_all())
+    if topic:
+        records = [r for r in records if topic in topic_matches(r, read_note_for_cli(r))]
+    data = revision_generator.generate(records)
+    path = revision_generator.save(data)
+    console.print(f"[green]✓[/green] Flashcards generated: {path / 'flashcards.json'}")
+
+
+def read_note_for_cli(record) -> str:
+    if record.generated_note_path and Path(record.generated_note_path).exists():
+        return Path(record.generated_note_path).read_text(encoding="utf-8")
+    return ""
+
+
+@app.command("export-flashcards")
+def export_flashcards(
+    format: str = typer.Option("json", "--format", help="json or csv"),
+):
+    """Export flashcards for spaced repetition tools."""
+    records = list(registry.get_all())
+    data = revision_generator.generate(records)
+    revision_generator.save(data)
+    path = revision_generator.export(data, format)
+    console.print(f"[green]✓[/green] Exported flashcards: {path}")
+
+
 @app.command()
 def test_llm(
     provider: str = typer.Option("mock", "--provider", help="Provider to smoke-test"),
@@ -1085,6 +1174,109 @@ def build_site(
     console.print("  cd site && npm install && npm run docs:dev")
 
 
+@app.command("smoke-site")
+def smoke_site():
+    """Smoke-test the built static site for missing or blank pages.
+
+    Checks that all expected generated pages exist, are non-empty,
+    contain level-1 headings, and are not placeholder-only.
+    Also validates that search JSON files exist and are valid JSON.
+    """
+    console.print("[bold blue]Smoking site...[/bold blue]\n")
+    errors: list[tuple[str, str]] = []
+    warnings: list[tuple[str, str]] = []
+    site_dir = config.get_data_path("site_generated", "docs")
+    repo_dir = Path(__file__).parent.parent / "site" / "docs"
+
+    expected_pages = [
+        ("Explorer page", site_dir / "explorer" / "index.md"),
+        ("Sources page", site_dir / "sources" / "index.md"),
+        ("Review page", site_dir / "review" / "index.md"),
+        ("Revision page", site_dir / "revision" / "index.md"),
+        ("Learn page", site_dir / "learn" / "index.md"),
+        ("Tags page", site_dir / "tags" / "index.md"),
+        ("Timeline page", site_dir / "timeline.md"),
+        ("Gaps page", site_dir / "gaps.md"),
+        ("Home page", site_dir / "index.md"),
+    ]
+
+    for label, path in expected_pages:
+        if not path.exists():
+            errors.append((label, f"Missing: {path}"))
+            continue
+        content = path.read_text(encoding="utf-8")
+        size = len(content)
+        if size < 50:
+            errors.append((label, f"Too small ({size} bytes): {path}"))
+            continue
+        has_h1 = any(line.startswith("# ") for line in content.splitlines())
+        has_frontmatter_title = content.strip().startswith("---") and "title:" in content[:500]
+        if not has_h1 and not has_frontmatter_title:
+            errors.append((label, f"No level-1 heading or frontmatter title in: {path}"))
+        placeholder_markers = [
+            "_No ",
+            "No ",
+        ]
+        first_200 = content[:200].lower()
+        if first_200.startswith("# ") and any(m.lower() in content[:500].lower() for m in placeholder_markers):
+            if size < 300:
+                warnings.append((label, f"Looks like placeholder-only content ({size} bytes)"))
+
+    expected_json = [
+        ("Search all.json", site_dir / "public" / "search" / "all.json"),
+        ("Search resources.json", site_dir / "public" / "search" / "resources.json"),
+    ]
+
+    for label, path in expected_json:
+        if not path.exists():
+            errors.append((label, f"Missing: {path}"))
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            items = data.get("items", [])
+            if not items:
+                warnings.append((label, f"Empty items array in {path}"))
+        except json.JSONDecodeError as exc:
+            errors.append((label, f"Invalid JSON in {path}: {exc}"))
+
+    explorer_path = site_dir / "explorer" / "index.md"
+    if explorer_path.exists():
+        explorer_content = explorer_path.read_text(encoding="utf-8")
+        if "wiki-explorer" not in explorer_content:
+            errors.append(("Explorer page", "Missing #wiki-explorer div"))
+        if "Static table fallback" not in explorer_content:
+            errors.append(("Explorer page", "Missing Static table fallback section"))
+        if "try {" not in explorer_content and "try{" not in explorer_content:
+            warnings.append(("Explorer page", "Missing JS error handling (try/catch)"))
+
+    for label, rel in [
+        ("Repo Explorer", Path("explorer") / "index.md"),
+        ("Repo Home", Path("index.md")),
+    ]:
+        path = repo_dir / rel
+        if not path.exists():
+            warnings.append((label, f"Not synced to repo site: {path}"))
+
+    if errors:
+        console.print(f"[red]Smoke test found {len(errors)} error(s) and {len(warnings)} warning(s):[/red]\n")
+        for label, msg in errors:
+            console.print(f"  [red]✗[/red] {label}: {msg}")
+        for label, msg in warnings:
+            console.print(f"  [yellow]⚠[/yellow] {label}: {msg}")
+        raise typer.Exit(1)
+    elif warnings:
+        console.print(f"[yellow]Smoke test passed with {len(warnings)} warning(s):[/yellow]\n")
+        for label, msg in warnings:
+            console.print(f"  [yellow]⚠[/yellow] {label}: {msg}")
+    else:
+        console.print("[green]✓[/green] Smoke test passed!")
+
+    page_count = sum(1 for _, p in expected_pages if p.exists())
+    json_count = sum(1 for _, p in expected_json if p.exists())
+    console.print(f"  Pages checked: {page_count}/{len(expected_pages)}")
+    console.print(f"  JSON files checked: {json_count}/{len(expected_json)}")
+
+
 @app.command()
 def validate(
     provider: Optional[str] = typer.Option(None, "--provider", help="Check staleness and provider-specific issues for this provider"),
@@ -1112,6 +1304,44 @@ def validate(
     
     # Check resources
     records = list(registry.get_all())
+
+    expected_site_files = [
+        ("review pages", site_builder.repo_site_dir / "review" / "index.md"),
+        ("search resources.json", site_builder.repo_site_dir / "public" / "search" / "resources.json"),
+        ("search all.json", site_builder.repo_site_dir / "public" / "search" / "all.json"),
+        ("Explorer page", site_builder.repo_site_dir / "explorer" / "index.md"),
+        ("Sources page", site_builder.repo_site_dir / "sources" / "index.md"),
+        ("Revision page", site_builder.repo_site_dir / "revision" / "index.md"),
+        ("Learn page", site_builder.repo_site_dir / "learn" / "index.md"),
+        ("Tags page", site_builder.repo_site_dir / "tags" / "index.md"),
+        ("Timeline page", site_builder.repo_site_dir / "timeline.md"),
+        ("Gaps page", site_builder.repo_site_dir / "gaps.md"),
+    ]
+    for label, path in expected_site_files:
+        if not path.exists():
+            issues.append(("warning", f"Missing generated {label}: {path}"))
+            continue
+        if path.suffix == ".json":
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                items = data.get("items", [])
+                if not items:
+                    issues.append(("warning", f"{label} has empty items array"))
+            except json.JSONDecodeError as exc:
+                issues.append(("warning", f"{label} has invalid JSON: {exc}"))
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+            size = len(content)
+            if size < 50:
+                issues.append(("warning", f"{label} is too small ({size} bytes): {path}"))
+            else:
+                has_h1 = any(line.startswith("# ") for line in content.splitlines())
+                has_frontmatter_title = content.strip().startswith("---") and "title:" in content[:500]
+                if not has_h1 and not has_frontmatter_title:
+                    issues.append(("warning", f"{label} has no level-1 heading: {path}"))
+        except Exception as exc:
+            issues.append(("warning", f"{label} read error: {exc}"))
 
     for record in records:
         if provider:
@@ -1429,6 +1659,199 @@ def import_transcript(
     record = transcript_media_normalizer.normalize(record)
     registry.update(record)
     console.print(f"[green]✓[/green] Imported transcript: {record.id}")
+
+
+def _directory_size(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return sum(file.stat().st_size for file in path.rglob("*") if file.is_file())
+
+
+@app.command()
+def doctor(
+    check_llm: bool = typer.Option(False, "--check-llm", help="Run LLM smoke test"),
+    check_asr: bool = typer.Option(False, "--check-asr", help="Check optional ASR imports"),
+):
+    """Check local environment readiness."""
+    checks: list[tuple[str, bool, str]] = []
+    checks.append(("Python >= 3.11", sys.version_info >= (3, 11), sys.version.split()[0]))
+    for module in ["typer", "pydantic", "httpx", "bs4", "yaml", "rich"]:
+        try:
+            __import__(module)
+            checks.append((f"dependency {module}", True, "ok"))
+        except ImportError as exc:
+            checks.append((f"dependency {module}", False, str(exc)))
+    checks.append(("ffmpeg", shutil.which("ffmpeg") is not None, shutil.which("ffmpeg") or "missing"))
+    checks.append(("data directory exists", config.LLM_WIKI_DATA_DIR.exists(), str(config.LLM_WIKI_DATA_DIR)))
+    repo_root = Path(__file__).resolve().parents[1]
+    outside_repo = not str(config.LLM_WIKI_DATA_DIR).startswith(str(repo_root))
+    checks.append(("data directory outside repo", outside_repo, str(config.LLM_WIKI_DATA_DIR)))
+    checks.append(("registry exists", registry.db_path.exists(), str(registry.db_path)))
+    checks.append(("VitePress package.json", (Path("site") / "package.json").exists(), "site/package.json"))
+    checks.append(("node_modules", (Path("site") / "node_modules").exists(), "site/node_modules"))
+    for error in config.validate():
+        checks.append((f"config: {error}", False, ""))
+    if check_asr:
+        for module in ["whisper", "faster_whisper"]:
+            try:
+                __import__(module)
+                checks.append((f"optional ASR {module}", True, "installed"))
+            except ImportError:
+                checks.append((f"optional ASR {module}", False, "not installed"))
+    if check_llm:
+        try:
+            MockProvider().generate("Return ok")
+            checks.append(("mock LLM smoke test", True, "ok"))
+        except Exception as exc:
+            checks.append(("mock LLM smoke test", False, str(exc)))
+    for label, ok, detail in checks:
+        console.print(f"{'[green]✓[/green]' if ok else '[yellow]⚠[/yellow]'} {label}: {detail}")
+
+
+@app.command("status-report")
+def status_report():
+    """Generate Markdown and JSON operational status reports."""
+    records = list(registry.get_all())
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    reports_dir = config.get_data_path("reports")
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    type_counts = Counter(record.source_type.value for record in records)
+    status_counts = Counter(record.status.value for record in records)
+    provider_counts = Counter(record.llm_provider or "none" for record in records)
+    review_required = sum(bool(record.extra.get("requires_human_review")) for record in records)
+    report = {
+        "generated_at": datetime.utcnow().isoformat(),
+        "resource_count": len(records),
+        "type_counts": dict(type_counts),
+        "status_counts": dict(status_counts),
+        "provider_counts": dict(provider_counts),
+        "review_required_count": review_required,
+        "learn_pages": len(list(config.get_data_path("processed", "learn").glob("*.md"))) if config.get_data_path("processed", "learn").exists() else 0,
+        "flashcards": len((Storage.read_json(config.get_data_path("processed", "revision", "flashcards.json")).get("items", []) if config.get_data_path("processed", "revision", "flashcards.json").exists() else [])),
+        "source_urls": len([record for record in records if record.original_url]),
+        "storage_bytes": {
+            "raw": _directory_size(config.get_data_path("raw")),
+            "normalized": _directory_size(config.get_data_path("normalized")),
+            "processed": _directory_size(config.get_data_path("processed")),
+        },
+        "latest_added": [record.id for record in sorted(records, key=lambda r: r.first_seen_at, reverse=True)[:10]],
+        "latest_processed": [record.id for record in sorted([r for r in records if r.processed_at], key=lambda r: r.processed_at, reverse=True)[:10]],
+    }
+    json_path = reports_dir / f"status_report_{timestamp}.json"
+    md_path = reports_dir / f"status_report_{timestamp}.md"
+    Storage.write_json(report, json_path)
+    lines = ["# Status Report", "", f"Generated: {report['generated_at']}", "", f"Total resources: {len(records)}", "", "## Resource count by type", ""]
+    lines.extend(f"- {key}: {value}" for key, value in report["type_counts"].items())
+    lines.extend(["", "## Resource count by status", ""])
+    lines.extend(f"- {key}: {value}" for key, value in report["status_counts"].items())
+    lines.extend(["", "## Provider counts", ""])
+    lines.extend(f"- {key}: {value}" for key, value in report["provider_counts"].items())
+    lines.extend(["", f"Review required: {review_required}", f"Learn pages: {report['learn_pages']}", f"Flashcards: {report['flashcards']}", f"Source URLs: {report['source_urls']}"])
+    Storage.write_text("\n".join(lines) + "\n", md_path)
+    console.print(f"[green]✓[/green] Status report: {md_path}")
+
+
+@app.command()
+def backup(
+    include_media: bool = typer.Option(False, "--include-media", help="Include derived media files"),
+    include_debug: bool = typer.Option(False, "--include-debug", help="Include debug failed outputs"),
+    output: Optional[Path] = typer.Option(None, "--output", help="Output tar.gz path"),
+):
+    """Backup external wiki data, not the Git repository."""
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    backups_dir = config.get_data_path("backups")
+    backups_dir.mkdir(parents=True, exist_ok=True)
+    out = (output.expanduser().resolve() if output else backups_dir / f"llm_wiki_backup_{timestamp}.tar.gz")
+    include_roots = ["registry", "raw", "normalized", "processed", "reports"]
+
+    def allowed(path: Path) -> bool:
+        rel = path.relative_to(config.LLM_WIKI_DATA_DIR)
+        parts = set(rel.parts)
+        if "tmp" in parts or "cache" in parts:
+            return False
+        if "debug" in parts and not include_debug:
+            return False
+        if not include_media and path.suffix.lower() in {".mp4", ".mov", ".mkv", ".webm", ".mp3", ".wav", ".m4a", ".aac", ".flac"}:
+            return False
+        return True
+
+    with tarfile.open(out, "w:gz") as tar:
+        for root_name in include_roots:
+            root = config.get_data_path(root_name)
+            if not root.exists():
+                continue
+            for path in root.rglob("*"):
+                if path.is_file() and allowed(path):
+                    tar.add(path, arcname=str(path.relative_to(config.LLM_WIKI_DATA_DIR)))
+    console.print(f"[green]✓[/green] Backup created: {out}")
+
+
+@app.command()
+def restore(
+    file: Path = typer.Option(..., "--file", help="Backup tar.gz file"),
+    target_dir: Optional[Path] = typer.Option(None, "--target-dir", help="Target data directory"),
+    yes: bool = typer.Option(False, "--yes", help="Overwrite non-empty target"),
+):
+    """Restore a backup into a target data directory."""
+    backup_path = file.expanduser().resolve()
+    if not backup_path.exists():
+        console.print(f"[red]Backup not found:[/red] {backup_path}")
+        raise typer.Exit(1)
+    target = (target_dir or config.LLM_WIKI_DATA_DIR).expanduser().resolve()
+    with tarfile.open(backup_path, "r:gz") as tar:
+        members = tar.getmembers()
+        console.print(f"Backup contains {len(members)} entries")
+        console.print(f"Target: {target}")
+        if target.exists() and any(target.iterdir()) and not yes:
+            console.print("[yellow]Target is non-empty. Re-run with --yes to restore.[/yellow]")
+            raise typer.Exit(1)
+        target.mkdir(parents=True, exist_ok=True)
+        tar.extractall(target)
+    if not (target / "registry" / "resources.sqlite").exists():
+        console.print("[red]Restore completed but registry/resources.sqlite is missing[/red]")
+        raise typer.Exit(1)
+    console.print(f"[green]✓[/green] Restored backup to {target}")
+
+
+@app.command()
+def daily(
+    provider: str = typer.Option("mock", "--provider", help="mock or ollama_cloud"),
+    yes: bool = typer.Option(False, "--yes", help="Allow real-provider processing"),
+    skip_llm: bool = typer.Option(False, "--skip-llm", help="Skip LLM processing"),
+    limit: Optional[int] = typer.Option(None, "--limit", help="Limit resources processed"),
+):
+    """Safe daily workflow."""
+    if provider == "ollama_cloud" and not yes:
+        console.print("[yellow]Refusing real Ollama Cloud daily run without --yes. Use --provider mock or --skip-llm.[/yellow]")
+        raise typer.Exit(1)
+    pending = list(registry.get_pending())
+    console.print(f"Pending/new resources: {len(pending)}")
+    for record in list(registry.get_all()):
+        if record.source_type.value == "webpage":
+            try:
+                updated = webpage_metadata_enricher.enrich(record)
+                registry.update(updated)
+            except Exception:
+                pass
+    if not skip_llm:
+        process_new(
+            force=False,
+            force_all=False,
+            dry_run=False,
+            limit=limit,
+            resource_id=None,
+            yes=yes,
+            allow_untitled=True,
+            skip_quality_gate=True,
+            skip_ingest=False,
+            only_stale=False,
+            provider=provider,
+        )
+    records = list(registry.get_all())
+    generate_derived_views(records)
+    site_builder.build(records)
+    validate(provider=None)
+    console.print("[green]✓[/green] Daily workflow complete")
 
 
 @app.command("normalize-registry-providers")
