@@ -205,10 +205,37 @@ def _count_files(directory: Path, pattern: str = "*.md") -> int:
     return len(list(directory.glob(pattern)))
 
 
+def _timeline_counts(periods) -> tuple[int, int]:
+    """Return timeline period and entry counts from generated periods."""
+    if periods is None:
+        timeline_json = config.get_data_path("processed", "timeline", "timeline.json")
+        if not timeline_json.exists():
+            return 0, 0
+        try:
+            data = Storage.read_json(timeline_json)
+            loaded_periods = data.get("periods", [])
+            return len(loaded_periods), sum(len(period.get("entries", [])) for period in loaded_periods)
+        except Exception:
+            return 0, 0
+    return len(periods), sum(len(period.entries) for period in periods)
+
+
+def _resource_route_target_exists(local_page: str, site_dir: Path) -> bool:
+    """Return whether a generated route path has a matching Markdown page."""
+    if not local_page.startswith("/"):
+        return False
+    if local_page.endswith(".md"):
+        return False
+    rel = local_page.strip("/")
+    candidates = [site_dir / f"{rel}.md", site_dir / rel / "index.md"]
+    return any(path.exists() for path in candidates)
+
+
 def write_generation_manifest(records, *, concepts=None, tags=None, topics=None,
                                learn=None, gaps=None, review=None, revision=None,
-                               indexes=None) -> Path:
+                               indexes=None, timeline=None) -> Path:
     """Write generated_manifest.json after all derived views finish."""
+    timeline_period_count, timeline_entry_count = _timeline_counts(timeline)
     manifest = {
         "generated_at": datetime.utcnow().isoformat(),
         "resource_count": len(list(records)) if records else 0,
@@ -220,7 +247,8 @@ def write_generation_manifest(records, *, concepts=None, tags=None, topics=None,
         "revision_question_count": len(revision.get("questions", [])) if isinstance(revision, dict) and revision else 0,
         "search_index_items": len((indexes or {}).get("all", [])),
         "gaps_count": len(gaps.needs_verification) + len(gaps.weak_examples) + len(gaps.missing_project_connection) + len(gaps.resources_missing_metadata) if gaps else 0,
-        "timeline_periods": _count_files(config.get_data_path("processed", "timeline"), "*.json"),
+        "timeline_periods": timeline_period_count,
+        "timeline_entries": timeline_entry_count,
         "outputs": {
             "concepts": str(config.get_data_path("processed", "concepts")),
             "timeline": str(config.get_data_path("processed", "timeline", "timeline.md")),
@@ -254,11 +282,6 @@ def generate_derived_views(records=None) -> dict:
     concept_extractor.save()
     console.print("  [green]✓[/green] Concepts saved")
 
-    console.print("Generating timeline...")
-    periods = timeline_generator.generate(records)
-    timeline_generator.save(periods)
-    console.print("  [green]✓[/green] Timeline saved")
-
     console.print("Generating tags...")
     tags = tags_generator.generate(records)
     tags_generator.save(tags)
@@ -268,6 +291,11 @@ def generate_derived_views(records=None) -> dict:
     topics = topic_generator.generate(records)
     topic_generator.save(topics)
     console.print("  [green]✓[/green] Topics saved")
+
+    console.print("Generating timeline...")
+    periods = timeline_generator.generate(records)
+    timeline_generator.save(periods)
+    console.print("  [green]✓[/green] Timeline saved")
 
     console.print("Generating gaps report...")
     gaps = gaps_generator.generate(records)
@@ -298,6 +326,7 @@ def generate_derived_views(records=None) -> dict:
     manifest_path = write_generation_manifest(
         records, concepts=concept_extractor.concepts, tags=tags, topics=topics,
         learn=learn, gaps=gaps, review=review, revision=revision, indexes=indexes,
+        timeline=periods,
     )
     console.print("  [green]✓[/green] Manifest saved")
 
@@ -1321,6 +1350,8 @@ def smoke_site():
                     local_page = item.get("local_page", "")
                     if local_page.endswith(".md"):
                         errors.append(("Search index", f"local_page ends with .md: {local_page[:100]}"))
+                    if local_page.startswith("/resources/") and not _resource_route_target_exists(local_page, site_dir):
+                        errors.append(("Search index", f"local_page target missing: {local_page}"))
         except json.JSONDecodeError as exc:
             errors.append((label, f"Invalid JSON in {path}: {exc}"))
 
@@ -1329,8 +1360,10 @@ def smoke_site():
         explorer_content = explorer_path.read_text(encoding="utf-8")
         if "wiki-explorer" not in explorer_content:
             errors.append(("Explorer page", "Missing #wiki-explorer div"))
-        if "Static table fallback" not in explorer_content:
-            errors.append(("Explorer page", "Missing Static table fallback section"))
+        if "## Resource summary" not in explorer_content:
+            errors.append(("Explorer page", "Missing Resource summary section"))
+        if "## Recent resources" not in explorer_content:
+            errors.append(("Explorer page", "Missing Recent resources section"))
         if "const items = [" in explorer_content:
             errors.append(("Explorer page", "Contains inline 'const items = [...]' — should use fetch() instead"))
         if "search/all.json" not in explorer_content:
@@ -1338,7 +1371,7 @@ def smoke_site():
         static_rows = explorer_content.count("| [")
         if static_rows < 1 and "| No items" not in explorer_content:
             warnings.append(("Explorer page", "Static fallback table has no resource rows"))
-        if "Could not load Explorer search index" not in explorer_content:
+        if "Could not load search index. Check /search/all.json." not in explorer_content:
             warnings.append(("Explorer page", "Missing fetch error fallback message"))
 
     # Check resources/index.md for broken links
@@ -1566,8 +1599,12 @@ def validate(
                 issues.append(("error", "Explorer contains inline 'const items = [...]' — should use fetch() instead"))
             if "search/all.json" not in ex_content:
                 issues.append(("warning", "Explorer does not reference search/all.json for data loading"))
-            if "Static table fallback" not in ex_content:
-                issues.append(("warning", "Explorer missing static fallback table"))
+            if "## Resource summary" not in ex_content:
+                issues.append(("warning", "Explorer missing Resource summary section"))
+            if "## Recent resources" not in ex_content:
+                issues.append(("warning", "Explorer missing Recent resources section"))
+            if "Could not load search index. Check /search/all.json." not in ex_content:
+                issues.append(("warning", "Explorer missing exact search-index error fallback"))
         except Exception as exc:
             issues.append(("warning", f"Explorer page read error: {exc}"))
 
@@ -1582,6 +1619,8 @@ def validate(
                 local_page = item.get("local_page", "")
                 if local_page.endswith(".md"):
                     issues.append(("error", f"all.json local_page ends with .md: {local_page[:80]}"))
+                if local_page.startswith("/resources/") and not _resource_route_target_exists(local_page, site_builder.repo_site_dir):
+                    issues.append(("error", f"all.json local_page target missing: {local_page}"))
         except json.JSONDecodeError as exc:
             issues.append(("warning", f"all.json has invalid JSON: {exc}"))
     else:

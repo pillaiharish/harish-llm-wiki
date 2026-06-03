@@ -10,6 +10,7 @@ from wiki.config import config
 from wiki.generate.page_utils import md_table_cell, resource_route
 from wiki.generate.search import search_index_generator
 from wiki.generate.topics import topic_generator
+from wiki.generate.revision import revision_generator
 from wiki.registry import Registry
 from wiki.resource_utils import (
     TOPIC_ALIASES,
@@ -267,6 +268,16 @@ class TestSearchIndexNoAliasTopics:
         ids = [item["id"] for item in indexes["all"]]
         assert "topic:rag" not in ids, "topic:rag should not appear in search index"
         assert "topic:security" not in ids, "topic:security should not appear in search index"
+
+
+class TestRevisionNoAliasTopics:
+    def test_revision_questions_use_canonical_topic(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(config, "LLM_WIKI_DATA_DIR", tmp_path)
+        record = _record(tmp_path, tags=["rag"])
+        data = revision_generator.generate([record])
+        topics = {item["topic"] for item in data["questions"]}
+        assert "rag" not in topics
+        assert "rag-retrieval" in topics
 
 
 class TestTopicMapNoDuplicateDisplayNames:

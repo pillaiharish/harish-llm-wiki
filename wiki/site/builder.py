@@ -162,11 +162,11 @@ Do not publish publicly unless content is appropriate for public sharing.
             status = record.status.value
             date = learned_date(record).strftime("%Y-%m-%d")
             
-            # Create individual resource page if note exists
+            # Create individual resource page. Resources without generated notes
+            # still need a route target for Explorer/Sources/search indexes.
+            resource_filename = resource_page_name(record.id)
+            resource_path = resources_dir / resource_filename
             if record.generated_note_path and record.generated_note_path.exists():
-                resource_filename = resource_page_name(record.id)
-                resource_path = resources_dir / resource_filename
-                
                 # Copy note content with site-build-time post-processing
                 note_content = Storage.read_text(record.generated_note_path)
                 
@@ -190,10 +190,16 @@ Do not publish publicly unless content is appropriate for public sharing.
                     + self._strip_duplicate_title(note_content),
                     resource_path,
                 )
-                
-                link = f"[{md_table_cell(title)}]({resource_route(record.id)})"
             else:
-                link = md_table_cell(title)
+                Storage.write_text(
+                    self._format_resource_header(record)
+                    + "\n\n"
+                    + "## Generated note\n\n"
+                    + "_No generated note is available for this resource yet._\n",
+                    resource_path,
+                )
+
+            link = f"[{md_table_cell(title)}]({resource_route(record.id)})"
             
             index_lines.append(f"| {link} | {md_table_cell(record.source_type.value)} | {md_table_cell(status)} | {date} |")
         
