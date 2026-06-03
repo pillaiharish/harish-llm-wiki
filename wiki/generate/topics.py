@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from wiki.config import config
+from wiki.generate.page_utils import md_table_cell, resource_route, topic_route
 from wiki.resource_utils import (
     TOPIC_DEFINITIONS,
     dedupe_records,
@@ -56,7 +57,7 @@ class TopicGenerator:
             if slug not in topics:
                 continue
             definition = TOPIC_DEFINITIONS[slug]
-            lines.append(f"- [{definition['name']}](./{slug}.md) ({len(topics[slug])} resources)")
+            lines.append(f"- [{definition['name']}]({topic_route(slug)}) ({len(topics[slug])} resources)")
         lines.extend(["", "## Provenance", "", f"- Generated: {datetime.utcnow().isoformat()}"])
         return "\n".join(lines)
 
@@ -81,11 +82,11 @@ class TopicGenerator:
         for record in ordered:
             date = learned_date(record).strftime("%Y-%m-%d")
             title = display_title(record, mark_missing=True)
-            link = f"[{title}](../resources/{resource_page_name(record.id)})"
+            link = f"[{md_table_cell(title)}]({resource_route(record.id)})"
             why = record.notes_from_user or record.description or "Needs review"
             lines.append(
-                f"| {date} | {link} | {record.source_type.value} | "
-                f"{self._table_value(why[:100])} | {record.status.value} |"
+                f"| {date} | {link} | {md_table_cell(record.source_type.value)} | "
+                f"{md_table_cell(why[:100])} | {md_table_cell(record.status.value)} |"
             )
         lines.extend([
             "",
@@ -129,10 +130,6 @@ class TopicGenerator:
                 for slug, records in topics.items()
             },
         }
-
-    def _table_value(self, value: str) -> str:
-        return str(value).replace("|", "\\|").replace("\n", " ")
-
 
 topic_generator = TopicGenerator()
 

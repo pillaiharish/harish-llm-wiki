@@ -21,6 +21,11 @@ export default defineConfig({
       { text: 'Home', link: '/' },
       { text: 'Resources', link: '/resources/' },
       { text: 'Topics', link: '/topics/' },
+      { text: 'Learn', link: '/learn/' },
+      { text: 'Explorer', link: '/explorer/' },
+      { text: 'Review', link: '/review/' },
+      { text: 'Revision', link: '/revision/' },
+      { text: 'Sources', link: '/sources/' },
       { text: 'Timeline', link: '/timeline' },
       { text: 'Concepts', link: '/concepts/' },
       { text: 'Tags', link: '/tags/' },
@@ -49,6 +54,39 @@ export default defineConfig({
           text: 'Topics',
           items: [
             { text: 'Topic Map', link: '/topics/' },
+          ]
+        }
+      ],
+      '/learn/': [
+        {
+          text: 'Learn',
+          items: [
+            { text: 'All Chapters', link: '/learn/' },
+          ]
+        }
+      ],
+      '/review/': [
+        {
+          text: 'Review',
+          items: [
+            { text: 'Dashboard', link: '/review/' },
+            { text: 'Weak Notes', link: '/review/weak-notes' },
+            { text: 'Fallback Notes', link: '/review/fallback-notes' },
+            { text: 'Failed Notes', link: '/review/failed-notes' },
+            { text: 'Missing Citations', link: '/review/missing-citations' },
+            { text: 'Stale Notes', link: '/review/stale-notes' },
+          ]
+        }
+      ],
+      '/revision/': [
+        {
+          text: 'Revision',
+          items: [
+            { text: 'Overview', link: '/revision/' },
+            { text: 'Questions', link: '/revision/questions' },
+            { text: 'Flashcards', link: '/revision/flashcards' },
+            { text: 'Weak Areas', link: '/revision/weak-areas' },
+            { text: 'By Topic', link: '/revision/by-topic' },
           ]
         }
       ],

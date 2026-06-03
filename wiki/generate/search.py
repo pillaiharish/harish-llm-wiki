@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from wiki.config import config
-from wiki.generate.page_utils import citation_count, extract_section, read_note, table_value
+from wiki.generate.page_utils import citation_count, extract_section, md_table_cell, read_note, resource_route
 from wiki.resource_utils import display_title, source_url, topic_matches
 from wiki.schemas import ResourceRecord
 from wiki.storage import Storage
@@ -59,7 +59,7 @@ class SearchIndexGenerator:
             "tags": record.tags,
             "topics": topics,
             "source_url": source_url(record),
-            "local_page": f"/resources/{record.id.replace(':', '_')}",
+            "local_page": resource_route(record.id),
             "provider": record.llm_provider or "",
             "model": record.llm_model or "",
             "prompt_version": record.prompt_version or "",
@@ -115,18 +115,17 @@ class SearchIndexGenerator:
                 "type": record.source_type.value,
                 "citation_count": citation_count(note),
                 "source_url": source_url(record),
-                "local_page": f"/resources/{record.id.replace(':', '_')}",
+                "local_page": resource_route(record.id),
             })
         return items
 
     def _explorer(self, items: list[dict[str, Any]]) -> str:
         rows = "\n".join(
-            f"| [{table_value(item['title'])}]({item['local_page']}) | {item['type']} | "
-            f"{', '.join(item.get('topics') or []) or '-'} | {item.get('provider') or '-'} | "
-            f"{item.get('review_status', '-')} | {item.get('stale_status', '-')} |"
+            f"| [{md_table_cell(item['title'])}]({item['local_page']}) | {md_table_cell(item['type'])} | "
+            f"{md_table_cell(', '.join(item.get('topics') or []) or '-')} | {md_table_cell(item.get('provider') or '-')} | "
+            f"{md_table_cell(item.get('review_status', '-'))} | {md_table_cell(item.get('stale_status', '-'))} |"
             for item in items[:200]
         )
-        data = json.dumps(items)
         return f"""# Explorer
 
 Search and filter the static wiki without a backend.
@@ -147,44 +146,61 @@ Search and filter the static wiki without a backend.
 </div>
 
 <script>
-try {{
-const items = {data};
-const fields = ['type','provider','review','stale'];
-function uniq(values) {{ return [...new Set(values.filter(Boolean))].sort(); }}
-function fill(id, values) {{
-  const el = document.getElementById(id);
-  uniq(values).forEach(v => {{ const o=document.createElement('option'); o.value=v; o.textContent=v; el.appendChild(o); }});
+async function initExplorer() {{
+  let items = [];
+  try {{
+    const base = import.meta.env.BASE_URL || '/';
+    const searchUrl = base.replace(/\\/$/, '/') + 'search/all.json';
+    const response = await fetch(searchUrl);
+    if (!response.ok) throw new Error('Failed to load');
+    const payload = await response.json();
+    items = payload.items || [];
+  }} catch(e) {{
+    document.getElementById('results').innerHTML = '<p>Could not load search index. Check /search/all.json.</p>';
+    return;
+  }}
+  const fields = ['type','provider','review','stale'];
+  function uniq(values) {{ return [...new Set(values.filter(Boolean))].sort(); }}
+  function fill(id, values) {{
+    const el = document.getElementById(id);
+    uniq(values).forEach(v => {{ const o=document.createElement('option'); o.value=v; o.textContent=v; el.appendChild(o); }});
+  }}
+  fill('type', items.map(i => i.type));
+  fill('topic', items.flatMap(i => i.topics || []));
+  fill('provider', items.map(i => i.provider));
+  fill('review', items.map(i => i.review_status));
+  fill('stale', items.map(i => i.stale_status));
+  function render() {{
+    const q = document.getElementById('q').value.toLowerCase();
+    const type = document.getElementById('type').value;
+    const topic = document.getElementById('topic').value;
+    const provider = document.getElementById('provider').value;
+    const review = document.getElementById('review').value;
+    const stale = document.getElementById('stale').value;
+    const filtered = items.filter(i =>
+      (!q || (i.title + ' ' + i.summary).toLowerCase().includes(q)) &&
+      (!type || i.type === type) &&
+      (!topic || (i.topics || []).includes(topic)) &&
+      (!provider || i.provider === provider) &&
+      (!review || i.review_status === review) &&
+      (!stale || i.stale_status === stale)
+    );
+    document.getElementById('results').innerHTML = filtered.slice(0, 100).map(i => `<p><a href="${{i.local_page}}">${{i.title}}</a> <code>${{i.type}}</code></p>`).join('');
+  }}
+  ['q','type','topic','provider','review','stale'].forEach(id => document.getElementById(id).addEventListener('input', render));
+  render();
 }}
-fill('type', items.map(i => i.type));
-fill('topic', items.flatMap(i => i.topics || []));
-fill('provider', items.map(i => i.provider));
-fill('review', items.map(i => i.review_status));
-fill('stale', items.map(i => i.stale_status));
-function render() {{
-  const q = document.getElementById('q').value.toLowerCase();
-  const type = document.getElementById('type').value;
-  const topic = document.getElementById('topic').value;
-  const provider = document.getElementById('provider').value;
-  const review = document.getElementById('review').value;
-  const stale = document.getElementById('stale').value;
-  const filtered = items.filter(i =>
-    (!q || (i.title + ' ' + i.summary).toLowerCase().includes(q)) &&
-    (!type || i.type === type) &&
-    (!topic || (i.topics || []).includes(topic)) &&
-    (!provider || i.provider === provider) &&
-    (!review || i.review_status === review) &&
-    (!stale || i.stale_status === stale)
-  );
-  document.getElementById('results').innerHTML = filtered.slice(0, 100).map(i => `<p><a href="${{i.local_page}}">${{i.title}}</a> <code>${{i.type}}</code></p>`).join('');
-}}
-['q','type','topic','provider','review','stale'].forEach(id => document.getElementById(id).addEventListener('input', render));
-render();
-}} catch(e) {{
-  document.getElementById('results').innerHTML = '<p>Could not initialize Explorer. Check that search data is available at /search/all.json.</p>';
-}}
+initExplorer();
 </script>
 
-## Static table fallback
+## Resource summary
+
+| Count | Value |
+|---|---:|
+| Indexed items | {len(items)} |
+| Recent resources shown | {min(len(items), 200)} |
+
+## Recent resources
 
 | Title | Type | Topic | Provider | Review | Stale |
 |---|---|---|---|---|---|
@@ -195,8 +211,8 @@ render();
         lines = ["# Sources", "", "| Source URL | Resource | Type | Provider/model |", "|---|---|---|---|"]
         for item in resources:
             lines.append(
-                f"| {table_value(item.get('source_url'))} | [{table_value(item['title'])}]({item['local_page']}) | "
-                f"{item['type']} | {item.get('provider') or '-'} / {item.get('model') or '-'} |"
+                f"| {md_table_cell(item.get('source_url'))} | [{md_table_cell(item['title'])}]({item['local_page']}) | "
+                f"{md_table_cell(item['type'])} | {md_table_cell(item.get('provider') or '-')} / {md_table_cell(item.get('model') or '-')} |"
             )
         return "\n".join(lines) + "\n"
 

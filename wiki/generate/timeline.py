@@ -5,6 +5,7 @@ from pathlib import Path
 from collections import defaultdict
 
 from wiki.config import config
+from wiki.generate.page_utils import md_table_cell, resource_route
 from wiki.resource_utils import (
     TOPIC_DEFINITIONS,
     dedupe_records,
@@ -131,8 +132,7 @@ class TimelineGenerator:
                 topic_name = TOPIC_DEFINITIONS.get(topic_slug, {}).get("name", topic_slug.title())
                 lines.extend([f"### {topic_name}", ""])
                 for entry in grouped[topic_slug]:
-                    resource_link = f"./resources/{resource_page_name(entry.resource_id)}"
-                    lines.append(f"- [{entry.resource_title}]({resource_link}) ({entry.resource_type.value})")
+                    lines.append(f"- [{md_table_cell(entry.resource_title)}]({resource_route(entry.resource_id)}) ({entry.resource_type.value})")
                     if entry.summary:
                         lines.append(f"  - {entry.summary}")
                 lines.append("")

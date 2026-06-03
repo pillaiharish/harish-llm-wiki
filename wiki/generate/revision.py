@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from wiki.config import config
-from wiki.generate.page_utils import bullet_lines, extract_section, read_note, table_value
-from wiki.resource_utils import display_title, topic_matches
+from wiki.generate.page_utils import bullet_lines, extract_section, learn_route, md_table_cell, read_note, resource_route
+from wiki.resource_utils import display_title, normalize_topic_slug, topic_matches
 from wiki.schemas import ResourceRecord
 from wiki.storage import Storage
 
@@ -45,7 +45,7 @@ class RevisionGenerator:
                     "topic": topics[0] if topics else "general",
                     "resource_id": record.id,
                     "resource_title": display_title(record, mark_missing=True),
-                    "resource_page": f"/resources/{record.id.replace(':', '_')}",
+                    "resource_page": resource_route(record.id),
                     "difficulty": self._difficulty(question),
                     "source": "fallback" if record.extra.get("note_completed_by_fallback") else "resource_note",
                     "requires_human_review": bool(record.extra.get("requires_human_review")),
@@ -67,10 +67,10 @@ class RevisionGenerator:
                 "id": f"learn-{path.stem}-q001",
                 "question": f"What are the main ideas in {title}?",
                 "answer_hint": "Review the source-backed synthesis section.",
-                "topic": path.stem,
+                "topic": normalize_topic_slug(path.stem),
                 "resource_id": "",
                 "resource_title": title,
-                "resource_page": f"/learn/{path.stem}",
+                "resource_page": learn_route(path.stem),
                 "difficulty": "medium",
                 "source": "learn_page",
                 "requires_human_review": False,
@@ -184,7 +184,7 @@ Generated: {datetime.utcnow().isoformat()}
     def _questions(self, questions: list[dict[str, Any]]) -> str:
         lines = ["# Revision Questions", "", "| Question | Topic | Source | Difficulty |", "|---|---|---|---|"]
         for item in questions:
-            lines.append(f"| {table_value(item['question'])} | {item['topic']} | [{table_value(item['resource_title'])}]({item['resource_page']}) | {item['difficulty']} |")
+            lines.append(f"| {md_table_cell(item['question'])} | {md_table_cell(item['topic'])} | [{md_table_cell(item['resource_title'])}]({item['resource_page']}) | {md_table_cell(item['difficulty'])} |")
         return "\n".join(lines) + "\n"
 
     def _flashcards(self, flashcards: list[dict[str, Any]]) -> str:
@@ -196,7 +196,7 @@ Generated: {datetime.utcnow().isoformat()}
     def _weak_areas(self, areas: list[dict[str, str]]) -> str:
         lines = ["# Weak Areas", "", "## High priority", "", "| Topic | Reason | Related resources | Suggested next action |", "|---|---|---|---|"]
         for area in areas:
-            lines.append(f"| {area['topic']} | {table_value(area['reason'])} | {table_value(area['resource'])} | {table_value(area['action'])} |")
+            lines.append(f"| {md_table_cell(area['topic'])} | {md_table_cell(area['reason'])} | {md_table_cell(area['resource'])} | {md_table_cell(area['action'])} |")
         if not areas:
             lines.append("| - | No weak areas detected | - | - |")
         return "\n".join(lines) + "\n"
