@@ -1335,6 +1335,7 @@ def smoke_site():
         ("Timeline page", site_dir / "timeline.md"),
         ("Gaps page", site_dir / "gaps.md"),
         ("Home page", site_dir / "index.md"),
+        ("Graph viewer", site_dir / "graph" / "viewer.md"),
     ]
 
     for label, path in expected_pages:
@@ -1506,6 +1507,26 @@ def smoke_site():
                 else:
                     warnings.append(("Knowledge graph", f"{code}: {message}"))
 
+    # Prompt 25: check the graph viewer page contents.
+    viewer_path = site_dir / "graph" / "viewer.md"
+    if viewer_path.exists():
+        try:
+            viewer_content = viewer_path.read_text(encoding="utf-8")
+        except Exception as exc:
+            warnings.append(("Graph viewer", f"Read error: {exc}"))
+        else:
+            required_viewer_strings = (
+                "public/graph/knowledge_graph.json",
+                '<div id="graph-viewer">',
+                'id="graph-search"',
+                'id="graph-node-list"',
+            )
+            for needle in required_viewer_strings:
+                if needle not in viewer_content:
+                    warnings.append(
+                        ("Graph viewer", f"Missing required marker: {needle!r}")
+                    )
+
     if errors:
         console.print(f"[red]Smoke test found {len(errors)} error(s) and {len(warnings)} warning(s):[/red]\n")
         for label, msg in errors:
@@ -1565,6 +1586,7 @@ def validate(
         ("Tags page", site_builder.repo_site_dir / "tags" / "index.md"),
         ("Timeline page", site_builder.repo_site_dir / "timeline.md"),
         ("Gaps page", site_builder.repo_site_dir / "gaps.md"),
+        ("graph viewer", site_builder.repo_site_dir / "graph" / "viewer.md"),
     ]
     for label, path in expected_site_files:
         if not path.exists():
@@ -1751,6 +1773,21 @@ def validate(
         else:
             for severity, code, message in graph_issues:
                 issues.append((severity, f"graph: {code}: {message}"))
+
+    # Prompt 25: check the graph viewer page contents.
+    viewer_repo_path = site_builder.repo_site_dir / "graph" / "viewer.md"
+    if viewer_repo_path.exists():
+        try:
+            viewer_content = viewer_repo_path.read_text(encoding="utf-8")
+            if "public/graph/knowledge_graph.json" not in viewer_content:
+                issues.append(
+                    (
+                        "warning",
+                        "Graph viewer does not reference /public/graph/knowledge_graph.json",
+                    )
+                )
+        except Exception as exc:
+            issues.append(("warning", f"Graph viewer read error: {exc}"))
 
     # Print results
     if issues:

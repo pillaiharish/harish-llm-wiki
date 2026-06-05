@@ -23,6 +23,7 @@ export default defineConfig({
       { text: 'Topics', link: '/topics/' },
       { text: 'Learn', link: '/learn/' },
       { text: 'Explorer', link: '/explorer/' },
+      { text: 'Graph', link: '/graph/' },
       { text: 'Review', link: '/review/' },
       { text: 'Revision', link: '/revision/' },
       { text: 'Sources', link: '/sources/' },
@@ -95,6 +96,16 @@ export default defineConfig({
           text: 'Tags',
           items: [
             { text: 'All Tags', link: '/tags/' },
+          ]
+        }
+      ],
+      '/graph/': [
+        {
+          text: 'Graph',
+          items: [
+            { text: 'Index', link: '/graph/' },
+            { text: 'Viewer', link: '/graph/viewer' },
+            { text: 'Resource relationships', link: '/graph/resource-relationships' },
           ]
         }
       ]

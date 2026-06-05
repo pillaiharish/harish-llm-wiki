@@ -135,5 +135,5 @@ _Showing top 20 of 190 edges for this type._
 
 ## Provenance
 
-- Generated: 2026-06-05T21:24:10.280715+00:00
+- Generated: 2026-06-05T22:13:51.299892+00:00
 - Detection: deterministic, no LLM, no embeddings, no BM25.

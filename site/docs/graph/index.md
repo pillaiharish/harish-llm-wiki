@@ -8,6 +8,7 @@ RAG, search, and visualization features.
 | [/public/graph/nodes.json](/public/graph/nodes.json) | All graph nodes |
 | [/public/graph/edges.json](/public/graph/edges.json) | All graph edges |
 | [/public/graph/knowledge_graph.json](/public/graph/knowledge_graph.json) | Combined bundle with stats |
+| [Open the graph viewer](/graph/viewer) | Interactive neighborhood + filter explorer (Prompt 25) |
 
 ## Stats
 
@@ -43,4 +44,4 @@ RAG, search, and visualization features.
 
 ## Provenance
 
-- Generated: 2026-06-05T21:24:10.280715+00:00
+- Generated: 2026-06-05T22:13:51.299892+00:00

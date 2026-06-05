@@ -325,6 +325,8 @@ Do not publish publicly unless content is appropriate for public sharing.
         if paths["knowledge_graph"].exists():
             print(f"  [green]✓[/green] Knowledge graph: {paths['directory']}")
             self._build_graph_index_page(graph)
+            # Prompt 25: also write the static graph viewer page.
+            self._build_graph_viewer_page(graph)
 
     def _build_graph_index_page(self, graph: dict) -> None:
         """Build a small Markdown landing page for the graph files.
@@ -346,6 +348,7 @@ Do not publish publicly unless content is appropriate for public sharing.
             "| [/public/graph/nodes.json](/public/graph/nodes.json) | All graph nodes |",
             "| [/public/graph/edges.json](/public/graph/edges.json) | All graph edges |",
             "| [/public/graph/knowledge_graph.json](/public/graph/knowledge_graph.json) | Combined bundle with stats |",
+            "| [Open the graph viewer](/graph/viewer) | Interactive neighborhood + filter explorer (Prompt 25) |",
             "",
             "## Stats",
             "",
@@ -509,6 +512,69 @@ Do not publish publicly unless content is appropriate for public sharing.
             "",
         ])
         Storage.write_text("\n".join(lines), graph_dir / "resource-relationships.md")
+
+    def _build_graph_viewer_page(self, graph: dict) -> None:
+        """Write the static graph viewer page (Prompt 25).
+
+        The page is a Markdown file with embedded vanilla
+        HTML/CSS/JavaScript. The Python side computes a small set of
+        summary fields (schema version, counts, top-N node ids, type
+        lists) and substitutes them into the in-repo template
+        ``site/docs/graph/viewer.md``. The JS reads the graph JSON
+        at runtime via ``fetch``.
+
+        The template path is computed from the ``wiki.site.builder``
+        module's location (the in-repo source of truth), not from
+        ``self.repo_site_dir``. This is important for tests: they
+        may instantiate a :class:`SiteBuilder` with a temporary
+        ``repo_site_dir`` that does not contain the template, and
+        they should still be able to build the viewer. The template
+        lives in the git repo alongside the other static Markdown
+        files; the build process reads it and writes the rendered
+        Markdown into ``self.data_site_dir / "graph" / "viewer.md"``,
+        which is then synced to the repo site directory by
+        :meth:`_sync_to_repo_site`.
+
+        The viewer is only generated when there is at least one
+        node, matching the gating rule for the index page.
+        """
+        from wiki.graph.viewer import viewer_markdown
+
+        nodes = graph.get("nodes", []) or []
+        if not nodes:
+            # No nodes: skip viewer (same gating as index page).
+            return
+
+        graph_dir = self.data_site_dir / "graph"
+        graph_dir.mkdir(parents=True, exist_ok=True)
+
+        # Read the in-repo template. The template is checked into
+        # the git repo at ``harish-llm-wiki/site/docs/graph/viewer.md``;
+        # compute that path from the module location rather than
+        # from ``self.repo_site_dir`` (which tests may rebind).
+        module_template_path = (
+            Path(__file__).parent.parent.parent
+            / "site"
+            / "docs"
+            / "graph"
+            / "viewer.md"
+        )
+        template_path = module_template_path
+        if not template_path.exists():
+            # Fallback: try the configured repo_site_dir.
+            template_path = self.repo_site_dir / "graph" / "viewer.md"
+        if not template_path.exists():
+            # Defensive: if the template was deleted from the repo
+            # we skip rather than crash the build.
+            print(
+                f"  [yellow]⚠[/yellow] Graph viewer template missing: "
+                f"{template_path}"
+            )
+            return
+
+        template = template_path.read_text(encoding="utf-8")
+        rendered = viewer_markdown(graph, template)
+        Storage.write_text(rendered, graph_dir / "viewer.md")
 
     def _copy_generated_section(self, section: str) -> None:
         """Copy a generated site section from external data if it exists."""
