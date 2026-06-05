@@ -13,7 +13,7 @@ RAG, search, and visualization features.
 
 - Schema version: `1.0.0`
 - Nodes: 64
-- Edges: 504
+- Edges: 1067
 
 ### Node types
 
@@ -33,10 +33,14 @@ RAG, search, and visualization features.
 | learn_chapter_uses_resource | 104 |
 | resource_has_topic | 43 |
 | resource_mentions_concept | 135 |
+| resource_same_source_type_as_resource | 123 |
+| resource_shares_concept_with_resource | 190 |
+| resource_shares_topic_with_resource | 60 |
+| resource_similar_to_resource | 190 |
 | review_page_reviews_resource | 39 |
 | topic_has_resource | 43 |
 | topic_related_to_topic | 45 |
 
 ## Provenance
 
-- Generated: 2026-06-05T20:24:25.193963+00:00
+- Generated: 2026-06-05T21:24:10.280715+00:00

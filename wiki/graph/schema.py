@@ -3,6 +3,13 @@
 All node and edge IDs are deterministic strings formed from a
 type prefix and a stable slug, so re-running the builder on the same
 input always produces the same IDs.
+
+Schema version history:
+
+- 1.0.0 (Prompt 23) – initial schema
+- 1.0.0 (Prompt 24) – additive: 6 resource-to-resource relationship
+  edge types. Backward-compatible; the schema_version string is
+  unchanged. See ``RESOURCE_RELATIONSHIP_EDGE_TYPES``.
 """
 
 from __future__ import annotations
@@ -51,6 +58,15 @@ EDGE_TYPE_RESOURCE_MENTIONS_CONCEPT = "resource_mentions_concept"
 EDGE_TYPE_CONCEPT_IN_TOPIC = "concept_in_topic"
 EDGE_TYPE_LEARN_CHAPTER_USES_RESOURCE = "learn_chapter_uses_resource"
 EDGE_TYPE_REVIEW_PAGE_REVIEWS_RESOURCE = "review_page_reviews_resource"
+# Resource-to-resource relationship edges (Prompt 24)
+EDGE_TYPE_RESOURCE_SIMILAR_TO_RESOURCE = "resource_similar_to_resource"
+EDGE_TYPE_RESOURCE_SHARES_TOPIC_WITH_RESOURCE = "resource_shares_topic_with_resource"
+EDGE_TYPE_RESOURCE_SHARES_CONCEPT_WITH_RESOURCE = "resource_shares_concept_with_resource"
+EDGE_TYPE_RESOURCE_SAME_SOURCE_TYPE_AS_RESOURCE = "resource_same_source_type_as_resource"
+EDGE_TYPE_RESOURCE_MAY_BE_PREREQUISITE_FOR_RESOURCE = (
+    "resource_may_be_prerequisite_for_resource"
+)
+EDGE_TYPE_RESOURCE_MAY_EXPAND_ON_RESOURCE = "resource_may_expand_on_resource"
 
 ALLOWED_EDGE_TYPES: frozenset[str] = frozenset(
     {
@@ -62,6 +78,27 @@ ALLOWED_EDGE_TYPES: frozenset[str] = frozenset(
         EDGE_TYPE_CONCEPT_IN_TOPIC,
         EDGE_TYPE_LEARN_CHAPTER_USES_RESOURCE,
         EDGE_TYPE_REVIEW_PAGE_REVIEWS_RESOURCE,
+        EDGE_TYPE_RESOURCE_SIMILAR_TO_RESOURCE,
+        EDGE_TYPE_RESOURCE_SHARES_TOPIC_WITH_RESOURCE,
+        EDGE_TYPE_RESOURCE_SHARES_CONCEPT_WITH_RESOURCE,
+        EDGE_TYPE_RESOURCE_SAME_SOURCE_TYPE_AS_RESOURCE,
+        EDGE_TYPE_RESOURCE_MAY_BE_PREREQUISITE_FOR_RESOURCE,
+        EDGE_TYPE_RESOURCE_MAY_EXPAND_ON_RESOURCE,
+    }
+)
+
+
+# Set of edge types that connect two resource nodes (Prompt 24).
+# Used by the graph builder, the validator, and the relationships
+# detector to filter on resource-to-resource edges specifically.
+RESOURCE_RELATIONSHIP_EDGE_TYPES: frozenset[str] = frozenset(
+    {
+        EDGE_TYPE_RESOURCE_SIMILAR_TO_RESOURCE,
+        EDGE_TYPE_RESOURCE_SHARES_TOPIC_WITH_RESOURCE,
+        EDGE_TYPE_RESOURCE_SHARES_CONCEPT_WITH_RESOURCE,
+        EDGE_TYPE_RESOURCE_SAME_SOURCE_TYPE_AS_RESOURCE,
+        EDGE_TYPE_RESOURCE_MAY_BE_PREREQUISITE_FOR_RESOURCE,
+        EDGE_TYPE_RESOURCE_MAY_EXPAND_ON_RESOURCE,
     }
 )
 

@@ -28,7 +28,9 @@ from wiki.graph.schema import (
     ALLOWED_NODE_TYPES,
     BLOCKED_ALIAS_TOPIC_SLUGS,
     EDGE_TYPE_RESOURCE_HAS_TOPIC,
+    NODE_TYPE_RESOURCE,
     NODE_TYPE_TOPIC,
+    RESOURCE_RELATIONSHIP_EDGE_TYPES,
     parse_node_id,
 )
 
@@ -74,6 +76,8 @@ def validate_graph(graph_data: dict[str, Any]) -> list[tuple[str, str, str]]:
     issues.extend(_check_deterministic_order(nodes, edges))
     issues.extend(_check_resource_topic_connectivity(nodes, edges))
     issues.extend(_check_stats_consistency(nodes, edges, graph_data.get("stats", {})))
+    issues.extend(_check_relationship_endpoints_are_resources(nodes, edges))
+    issues.extend(_check_no_self_relationship_edges(edges))
 
     return issues
 
@@ -390,4 +394,72 @@ def _check_stats_consistency(
                 f"stats.edge_count={stats['edge_count']} but {len(edges)} edges present",
             )
         )
+    return issues
+
+
+# -----------------------------------------------------------------------------
+# Resource-to-resource relationship edge checks (Prompt 24)
+# -----------------------------------------------------------------------------
+
+
+def _check_relationship_endpoints_are_resources(
+    nodes: list[dict[str, Any]], edges: list[dict[str, Any]]
+) -> list[tuple[str, str, str]]:
+    """For every resource-relationship edge, both endpoints must be resource nodes.
+
+    Catches mistakes like a relationship edge whose target is a topic
+    or concept node. Reported as ``relationship_endpoint_not_resource``
+    so consumers can distinguish this from the generic
+    ``edge_source_missing`` / ``edge_target_missing`` codes.
+    """
+    issues: list[tuple[str, str, str]] = []
+    node_types_by_id: dict[str, str] = {
+        n.get("id"): n.get("type") for n in nodes if n.get("id")
+    }
+    for edge in edges:
+        edge_type = edge.get("type")
+        if edge_type not in RESOURCE_RELATIONSHIP_EDGE_TYPES:
+            continue
+        source_type = node_types_by_id.get(edge.get("source"))
+        target_type = node_types_by_id.get(edge.get("target"))
+        if source_type != NODE_TYPE_RESOURCE:
+            issues.append(
+                (
+                    "error",
+                    "relationship_endpoint_not_resource",
+                    f"Relationship edge {edge.get('id')!r} source "
+                    f"{edge.get('source')!r} is not a resource node "
+                    f"(type={source_type!r})",
+                )
+            )
+        if target_type != NODE_TYPE_RESOURCE:
+            issues.append(
+                (
+                    "error",
+                    "relationship_endpoint_not_resource",
+                    f"Relationship edge {edge.get('id')!r} target "
+                    f"{edge.get('target')!r} is not a resource node "
+                    f"(type={target_type!r})",
+                )
+            )
+    return issues
+
+
+def _check_no_self_relationship_edges(
+    edges: list[dict[str, Any]],
+) -> list[tuple[str, str, str]]:
+    """For every resource-relationship edge, source must differ from target."""
+    issues: list[tuple[str, str, str]] = []
+    for edge in edges:
+        edge_type = edge.get("type")
+        if edge_type not in RESOURCE_RELATIONSHIP_EDGE_TYPES:
+            continue
+        if edge.get("source") == edge.get("target"):
+            issues.append(
+                (
+                    "error",
+                    "self_relationship_edge",
+                    f"Relationship edge {edge.get('id')!r} has source == target",
+                )
+            )
     return issues

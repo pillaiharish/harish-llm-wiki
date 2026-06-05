@@ -14,6 +14,10 @@ from typing import Any
 
 from wiki.config import config
 from wiki.generate.page_utils import read_note, resource_route
+from wiki.graph.relationships import (
+    build_resource_views,
+    detect_resource_relationships,
+)
 from wiki.graph.schema import (
     BLOCKED_ALIAS_TOPIC_SLUGS,
     EDGE_TYPE_CONCEPT_IN_TOPIC,
@@ -103,6 +107,7 @@ class GraphBuilder:
         self._build_learn_chapter_resource_edges()
         self._build_review_page_resource_edges()
         self._build_topic_related_edges()
+        self._build_resource_relationship_edges()
 
         # Deterministic ordering for the JSON output
         self._nodes.sort(key=lambda n: n["id"])
@@ -533,6 +538,30 @@ class GraphBuilder:
                         metadata={"deterministic": True, "placeholder": True},
                     )
                 )
+
+    def _build_resource_relationship_edges(self) -> None:
+        """Build resource-to-resource relationship edges (Prompt 24).
+
+        This calls the deterministic detector in
+        :mod:`wiki.graph.relationships` with the resource views built
+        from ``self._resource_topics`` and ``self._resource_concepts``
+        caches plus the resource node metadata. Each returned edge is
+        inserted via :meth:`_add_edge` so the existing dedupe and
+        endpoint-checks apply unchanged.
+        """
+        resource_nodes = [n for n in self._nodes if n["type"] == NODE_TYPE_RESOURCE]
+        if len(resource_nodes) < 2:
+            # No pairs to consider.
+            return
+        views = build_resource_views(
+            resources=resource_nodes,
+            resource_topics=self._resource_topics,
+            resource_concepts=self._resource_concepts,
+        )
+        edges = detect_resource_relationships(views)
+        for edge in edges:
+            self._add_edge(edge)
+
 
     # --------------------------------------------------------------- helpers
 

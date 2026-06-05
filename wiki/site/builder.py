@@ -373,6 +373,142 @@ Do not publish publicly unless content is appropriate for public sharing.
         graph_dir = self.data_site_dir / "graph"
         graph_dir.mkdir(parents=True, exist_ok=True)
         Storage.write_text("\n".join(lines), graph_dir / "index.md")
+        # Prompt 24: also write the resource-relationships report page
+        # (only if at least one relationship edge was detected).
+        self._build_resource_relationships_page(graph, graph_dir)
+
+    def _build_resource_relationships_page(
+        self, graph: dict, graph_dir: Path
+    ) -> None:
+        """Write a Markdown report of detected resource relationships.
+
+        Prompt 24 introduces six new resource-to-resource edge types.
+        This page surfaces the top relationships for each type in a
+        compact table, sourced directly from the graph bundle. It is
+        only generated if at least one of the six edge types has a
+        non-zero count in ``stats.edge_type_counts``.
+
+        The page is generated from the same in-memory graph as the
+        JSON files (no second build pass), so it is byte-stable for a
+        given input.
+        """
+        from wiki.graph.schema import RESOURCE_RELATIONSHIP_EDGE_TYPES
+
+        stats = graph.get("stats", {}) or {}
+        edge_type_counts = stats.get("edge_type_counts", {}) or {}
+        rel_counts = {
+            et: edge_type_counts.get(et, 0)
+            for et in sorted(RESOURCE_RELATIONSHIP_EDGE_TYPES)
+        }
+        if sum(rel_counts.values()) == 0:
+            # No relationship edges to report; skip the page.
+            return
+
+        nodes = graph.get("nodes", []) or []
+        edges = graph.get("edges", []) or []
+        # Build a label lookup so the table can show the resource
+        # title rather than the bare id.
+        labels_by_id = {
+            n.get("id"): n.get("label", n.get("id", ""))
+            for n in nodes
+            if n.get("id")
+        }
+
+        lines: list[str] = [
+            "# Resource Relationships",
+            "",
+            "Deterministic resource-to-resource relationships detected at graph build",
+            "time (Prompt 24). Each row corresponds to a single edge in the",
+            "knowledge graph. Scores and reason lists come from the edge metadata.",
+            "",
+            "## Edge type summary",
+            "",
+            "| Edge type | Count |",
+            "|---|---:|",
+        ]
+        for edge_type, count in rel_counts.items():
+            lines.append(f"| {edge_type} | {count} |")
+
+        # Friendly description per edge type.
+        descriptions = {
+            "resource_similar_to_resource": (
+                "Catch-all similarity edge. Emitted when a pair's combined "
+                "topic/concept/keyword score meets the threshold."
+            ),
+            "resource_shares_topic_with_resource": (
+                "Both resources match the same canonical topic."
+            ),
+            "resource_shares_concept_with_resource": (
+                "Both resources mention the same concept slug."
+            ),
+            "resource_same_source_type_as_resource": (
+                "Both resources share a source type and at least one of "
+                "topic/concept/keyword overlap."
+            ),
+            "resource_may_be_prerequisite_for_resource": (
+                "Asymmetric: shallower resource may be a prerequisite for "
+                "the deeper one on the same topic."
+            ),
+            "resource_may_expand_on_resource": (
+                "Asymmetric: deeper resource may expand on the shallower "
+                "one on the same topic."
+            ),
+        }
+        lines.extend(["", "## Per-type details", ""])
+        for edge_type in sorted(RESOURCE_RELATIONSHIP_EDGE_TYPES):
+            if rel_counts.get(edge_type, 0) == 0:
+                continue
+            lines.append(f"### `{edge_type}`")
+            lines.append("")
+            lines.append(descriptions.get(edge_type, ""))
+            lines.append("")
+            matching = [
+                e for e in edges if e.get("type") == edge_type
+            ]
+            # Sort: highest score first, then by edge id for stability.
+            matching.sort(
+                key=lambda e: (
+                    -float((e.get("metadata") or {}).get("score", 0.0)),
+                    e.get("id", ""),
+                )
+            )
+            top = matching[:20]
+            lines.extend([
+                "| Source | Target | Score | Reasons | Shared topics | Shared concepts | Shared keywords |",
+                "|---|---|---:|---|---|---|---|",
+            ])
+            for edge in top:
+                meta = edge.get("metadata") or {}
+                source_label = labels_by_id.get(edge.get("source"), edge.get("source", ""))
+                target_label = labels_by_id.get(edge.get("target"), edge.get("target", ""))
+                reasons = ", ".join(meta.get("reasons", []) or [])
+                shared_topics = ", ".join(meta.get("shared_topics", []) or [])
+                shared_concepts = ", ".join(meta.get("shared_concepts", []) or [])
+                shared_keywords = ", ".join(meta.get("shared_keywords", []) or [])
+                score = meta.get("score", 0.0)
+                lines.append(
+                    f"| {md_table_cell(source_label)} | "
+                    f"{md_table_cell(target_label)} | {score} | "
+                    f"{md_table_cell(reasons)} | "
+                    f"{md_table_cell(shared_topics)} | "
+                    f"{md_table_cell(shared_concepts)} | "
+                    f"{md_table_cell(shared_keywords)} |"
+                )
+            if len(matching) > 20:
+                lines.append("")
+                lines.append(
+                    f"_Showing top 20 of {len(matching)} edges for this type._"
+                )
+            lines.append("")
+
+        lines.extend([
+            "## Provenance",
+            "",
+            f"- Generated: {graph.get('generated_at', '')}",
+            "- Detection: deterministic, no LLM, no embeddings, no BM25.",
+            "",
+        ])
+        Storage.write_text("\n".join(lines), graph_dir / "resource-relationships.md")
 
     def _copy_generated_section(self, section: str) -> None:
         """Copy a generated site section from external data if it exists."""
