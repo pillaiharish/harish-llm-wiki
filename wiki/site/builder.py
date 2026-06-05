@@ -68,11 +68,18 @@ class SiteBuilder:
         self._copy_generated_section("revision")
         self._copy_generated_section("explorer")
         self._copy_generated_section("sources")
+
+        # Build the knowledge graph (Prompt 23).
+        # The JSON files are written into
+        # ``self.data_site_dir / public / graph`` and will be picked up
+        # by the ``public`` copy step below.
+        self._build_knowledge_graph(records)
+
         self._copy_generated_section("public")
-        
+
         # Build gaps page
         self._build_gaps()
-        
+
         # Sync to repo site directory
         self._sync_to_repo_site()
         
@@ -294,6 +301,78 @@ Do not publish publicly unless content is appropriate for public sharing.
         
         gaps_path = self.data_site_dir / "gaps.md"
         Storage.write_text(content, gaps_path)
+
+    def _build_knowledge_graph(self, records: List[ResourceRecord]) -> None:
+        """Build the knowledge graph JSON files and Markdown index.
+
+        Prompt 23 introduces the graph data model and JSON export. The
+        files are written into ``self.data_site_dir / public / graph``
+        so the existing ``_copy_generated_section("public")`` pass
+        syncs them into the VitePress site automatically.
+        """
+        from wiki.graph import GraphBuilder, export_graph
+        from wiki.graph.export import graph_output_paths
+
+        try:
+            data_dir = config.LLM_WIKI_DATA_DIR
+            graph = GraphBuilder(data_dir=data_dir).build(records)
+            export_graph(graph, data_dir=data_dir)
+        except Exception as exc:  # pragma: no cover - defensive
+            print(f"  [yellow]⚠[/yellow] Knowledge graph build failed: {exc}")
+            return
+
+        paths = graph_output_paths(data_dir=data_dir)
+        if paths["knowledge_graph"].exists():
+            print(f"  [green]✓[/green] Knowledge graph: {paths['directory']}")
+            self._build_graph_index_page(graph)
+
+    def _build_graph_index_page(self, graph: dict) -> None:
+        """Build a small Markdown landing page for the graph files.
+
+        The page is only generated if there is at least one node, so
+        an empty wiki does not surface a useless landing page.
+        """
+        stats = graph.get("stats", {})
+        node_type_counts = stats.get("node_type_counts", {}) or {}
+        edge_type_counts = stats.get("edge_type_counts", {}) or {}
+        lines = [
+            "# Knowledge Graph",
+            "",
+            "The wiki exposes a deterministic knowledge graph as JSON for future",
+            "RAG, search, and visualization features.",
+            "",
+            "| File | Purpose |",
+            "|---|---|",
+            "| [/public/graph/nodes.json](/public/graph/nodes.json) | All graph nodes |",
+            "| [/public/graph/edges.json](/public/graph/edges.json) | All graph edges |",
+            "| [/public/graph/knowledge_graph.json](/public/graph/knowledge_graph.json) | Combined bundle with stats |",
+            "",
+            "## Stats",
+            "",
+            f"- Schema version: `{graph.get('schema_version', 'unknown')}`",
+            f"- Nodes: {stats.get('node_count', 0)}",
+            f"- Edges: {stats.get('edge_count', 0)}",
+            "",
+            "### Node types",
+            "",
+            "| Type | Count |",
+            "|---|---:|",
+        ]
+        for node_type, count in sorted(node_type_counts.items()):
+            lines.append(f"| {node_type} | {count} |")
+        lines.extend(["", "### Edge types", "", "| Type | Count |", "|---|---:|"])
+        for edge_type, count in sorted(edge_type_counts.items()):
+            lines.append(f"| {edge_type} | {count} |")
+        lines.extend([
+            "",
+            "## Provenance",
+            "",
+            f"- Generated: {graph.get('generated_at', '')}",
+            "",
+        ])
+        graph_dir = self.data_site_dir / "graph"
+        graph_dir.mkdir(parents=True, exist_ok=True)
+        Storage.write_text("\n".join(lines), graph_dir / "index.md")
 
     def _copy_generated_section(self, section: str) -> None:
         """Copy a generated site section from external data if it exists."""

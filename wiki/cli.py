@@ -233,9 +233,10 @@ def _resource_route_target_exists(local_page: str, site_dir: Path) -> bool:
 
 def write_generation_manifest(records, *, concepts=None, tags=None, topics=None,
                                learn=None, gaps=None, review=None, revision=None,
-                               indexes=None, timeline=None) -> Path:
+                               indexes=None, timeline=None, graph=None) -> Path:
     """Write generated_manifest.json after all derived views finish."""
     timeline_period_count, timeline_entry_count = _timeline_counts(timeline)
+    graph_stats = (graph or {}).get("stats", {}) if isinstance(graph, dict) else {}
     manifest = {
         "generated_at": datetime.utcnow().isoformat(),
         "resource_count": len(list(records)) if records else 0,
@@ -249,6 +250,8 @@ def write_generation_manifest(records, *, concepts=None, tags=None, topics=None,
         "gaps_count": len(gaps.needs_verification) + len(gaps.weak_examples) + len(gaps.missing_project_connection) + len(gaps.resources_missing_metadata) if gaps else 0,
         "timeline_periods": timeline_period_count,
         "timeline_entries": timeline_entry_count,
+        "graph_node_count": graph_stats.get("node_count", 0),
+        "graph_edge_count": graph_stats.get("edge_count", 0),
         "outputs": {
             "concepts": str(config.get_data_path("processed", "concepts")),
             "timeline": str(config.get_data_path("processed", "timeline", "timeline.md")),
@@ -261,12 +264,31 @@ def write_generation_manifest(records, *, concepts=None, tags=None, topics=None,
             "revision": str(config.get_data_path("processed", "revision")),
             "explorer": str(config.get_data_path("site_generated", "docs", "explorer", "index.md")),
             "sources": str(config.get_data_path("site_generated", "docs", "sources", "index.md")),
+            "graph": str(config.get_data_path("site_generated", "docs", "public", "graph")),
         },
     }
     manifest_path = config.get_data_path("processed", "generated_manifest.json")
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     Storage.write_json(manifest, manifest_path)
     return manifest_path
+
+
+def _build_knowledge_graph_for_manifest(records):
+    """Build and export the knowledge graph (Prompt 23).
+
+    Returns the in-memory graph dict, or ``{}`` if the build fails
+    (in which case a warning is logged but execution continues).
+    """
+    from wiki.graph import GraphBuilder
+    from wiki.graph.export import export_graph
+
+    try:
+        graph = GraphBuilder().build(records)
+        export_graph(graph)
+    except Exception as exc:  # pragma: no cover - defensive
+        console.print(f"  [yellow]⚠[/yellow] Knowledge graph build failed: {exc}")
+        return {}
+    return graph
 
 
 def generate_derived_views(records=None) -> dict:
@@ -322,11 +344,15 @@ def generate_derived_views(records=None) -> dict:
     revision_generator.save(revision)
     console.print("  [green]✓[/green] Revision pages saved")
 
+    console.print("Generating knowledge graph...")
+    graph_data = _build_knowledge_graph_for_manifest(records)
+    console.print("  [green]✓[/green] Knowledge graph saved")
+
     console.print("Writing generation manifest...")
     manifest_path = write_generation_manifest(
         records, concepts=concept_extractor.concepts, tags=tags, topics=topics,
         learn=learn, gaps=gaps, review=review, revision=revision, indexes=indexes,
-        timeline=periods,
+        timeline=periods, graph=graph_data,
     )
     console.print("  [green]✓[/green] Manifest saved")
 
@@ -336,6 +362,8 @@ def generate_derived_views(records=None) -> dict:
     console.print(f"  Gaps: {manifest['gaps_count']}")
     console.print(f"  Learn pages: {manifest['learn_page_count']}")
     console.print(f"  Search index items: {manifest['search_index_items']}")
+    console.print(f"  Graph nodes: {manifest.get('graph_node_count', 0)}")
+    console.print(f"  Graph edges: {manifest.get('graph_edge_count', 0)}")
 
     return manifest
 
@@ -1440,6 +1468,44 @@ def smoke_site():
         except json.JSONDecodeError:
             errors.append(("Generation manifest", f"Invalid JSON: {manifest_path}"))
 
+    # Check the knowledge graph (Prompt 23).
+    graph_dir = site_dir / "public" / "graph"
+    expected_graph = [
+        ("Knowledge graph nodes.json", graph_dir / "nodes.json"),
+        ("Knowledge graph edges.json", graph_dir / "edges.json"),
+        ("Knowledge graph knowledge_graph.json", graph_dir / "knowledge_graph.json"),
+    ]
+    for label, path in expected_graph:
+        if not path.exists():
+            warnings.append((label, f"Missing: {path}"))
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            errors.append((label, f"Invalid JSON in {path}: {exc}"))
+            continue
+        if label == "Knowledge graph knowledge_graph.json":
+            for required in ("schema_version", "nodes", "edges", "stats"):
+                if required not in data:
+                    errors.append((label, f"Missing key '{required}' in {path}"))
+    # Run the graph validator on the on-disk files
+    if (graph_dir / "nodes.json").exists() and (graph_dir / "edges.json").exists():
+        try:
+            from wiki.graph import iter_issues_from_files
+            graph_issues = iter_issues_from_files(
+                graph_dir / "nodes.json",
+                graph_dir / "edges.json",
+                knowledge_graph_path=graph_dir / "knowledge_graph.json",
+            )
+        except Exception as exc:
+            warnings.append(("Knowledge graph", f"Validator load failed: {exc}"))
+        else:
+            for severity, code, message in graph_issues:
+                if severity == "error":
+                    errors.append(("Knowledge graph", f"{code}: {message}"))
+                else:
+                    warnings.append(("Knowledge graph", f"{code}: {message}"))
+
     if errors:
         console.print(f"[red]Smoke test found {len(errors)} error(s) and {len(warnings)} warning(s):[/red]\n")
         for label, msg in errors:
@@ -1664,6 +1730,27 @@ def validate(
             debug_dir = config.get_data_path("debug", "failed_notes", record.id)
             if debug_dir.exists() and any(debug_dir.iterdir()):
                 issues.append(("warning", f"{record.id}: debug failed_notes directory exists"))
+
+    # Check the knowledge graph (Prompt 23)
+    graph_dir = site_builder.repo_site_dir / "public" / "graph"
+    nodes_path = graph_dir / "nodes.json"
+    edges_path = graph_dir / "edges.json"
+    knowledge_graph_path = graph_dir / "knowledge_graph.json"
+    if not nodes_path.exists():
+        issues.append(("warning", f"Missing knowledge graph: {nodes_path}. Run build-site --refresh."))
+    if not edges_path.exists():
+        issues.append(("warning", f"Missing knowledge graph: {edges_path}. Run build-site --refresh."))
+    if nodes_path.exists() or edges_path.exists():
+        try:
+            from wiki.graph import iter_issues_from_files
+            graph_issues = iter_issues_from_files(
+                nodes_path, edges_path, knowledge_graph_path=knowledge_graph_path
+            )
+        except Exception as exc:
+            issues.append(("warning", f"Could not load graph validator: {exc}"))
+        else:
+            for severity, code, message in graph_issues:
+                issues.append((severity, f"graph: {code}: {message}"))
 
     # Print results
     if issues:
