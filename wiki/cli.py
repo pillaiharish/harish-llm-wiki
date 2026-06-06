@@ -24,6 +24,8 @@ from wiki.ingest.youtube import youtube_ingestor
 from wiki.ingest.webpage import webpage_ingestor
 from wiki.ingest.markdown import markdown_ingestor
 from wiki.ingest.media import extract_audio_to_wav, media_ingestor
+from wiki.ingest.pdf import PdfEncryptedError, pdf_ingestor
+from wiki.normalize.pdf import pdf_normalizer
 from wiki.normalize.transcript import youtube_normalizer
 from wiki.normalize.webpage import webpage_normalizer
 from wiki.normalize.markdown import markdown_normalizer
@@ -1747,6 +1749,16 @@ def validate(
             if record.local_raw_path and not record.local_raw_path.exists():
                 issues.append(("error", f"{record.id}: Missing raw files"))
 
+        # Prompt 26: PDF records should always have raw and
+        # normalized paths after `import-pdf` (the normalizer
+        # runs as part of the command). This is a soft warning;
+        # it never escalates to an error.
+        if record.source_type == SourceType.PDF and record.status != ResourceStatus.FAILED_PERMANENT:
+            if record.local_raw_path and not record.local_raw_path.exists():
+                issues.append(("warning", f"{record.id}: PDF raw directory missing: {record.local_raw_path}"))
+            if record.local_normalized_path and not record.local_normalized_path.exists():
+                issues.append(("warning", f"{record.id}: PDF normalized directory missing: {record.local_normalized_path}"))
+
         # Check for debug failed notes
         if record.status.value == "failed_retryable":
             debug_dir = config.get_data_path("debug", "failed_notes", record.id)
@@ -1955,6 +1967,83 @@ def add_media(
     registry.update(built)
     console.print(f"[green]✓[/green] Added media: {built.id}")
     console.print(f"[dim]Transcription status: {built.extra.get('transcription_status')}[/dim]")
+
+
+@app.command("import-pdf")
+def import_pdf(
+    file: Path = typer.Option(..., "--file", "-f", help="Path to a local PDF file"),
+    title: Optional[str] = typer.Option(None, "--title", help="Optional title override"),
+    source_url: Optional[str] = typer.Option(None, "--source-url", help="Optional source URL"),
+    tags: Optional[str] = typer.Option(None, "--tags", help="Comma-separated tags"),
+    copy_file: bool = typer.Option(
+        False,
+        "--copy-file/--no-copy-file",
+        help="Copy the PDF into the data directory under media/pdfs/",
+    ),
+    force: bool = typer.Option(False, "--force", help="Re-ingest even if the resource already exists"),
+):
+    """Import a local PDF file as a new resource.
+
+    The PDF is read locally with pypdf; pages are extracted
+    into text and stored under the external data directory.
+    Encrypted or scanned PDFs are not supported in this prompt.
+    """
+    path = file.expanduser().resolve()
+    if not path.exists() or not path.is_file():
+        console.print(f"[red]✗[/red] PDF not found: {path}")
+        raise typer.Exit(1)
+    if path.suffix.lower() != ".pdf":
+        console.print(f"[red]✗[/red] Not a .pdf file: {path}")
+        raise typer.Exit(1)
+
+    tag_list = [t.strip() for t in (tags or "").split(",") if t.strip()]
+
+    try:
+        record = pdf_ingestor.build_record(
+            path,
+            title=title,
+            source_url=source_url,
+            tags=tag_list,
+            copy_file=copy_file,
+        )
+    except PdfEncryptedError as exc:
+        console.print(f"[red]✗[/red] PDF is encrypted and cannot be read: {path} ({exc})")
+        raise typer.Exit(1)
+    except FileNotFoundError as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise typer.Exit(1)
+    except ValueError as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise typer.Exit(1)
+    except Exception as exc:  # pypdf PdfReadError and friends
+        console.print(f"[red]✗[/red] Could not read PDF: {path} ({exc})")
+        raise typer.Exit(1)
+
+    existing = registry.get_by_canonical_id(record.canonical_id)
+    if existing and not force:
+        console.print(f"[yellow]⚠[/yellow] Duplicate PDF skipped: {existing.id}")
+        return
+
+    if existing and force:
+        record.id = existing.id
+        record.first_seen_at = existing.first_seen_at
+        registry.update(record)
+    else:
+        identity = ResourceIdentity(
+            source_type=SourceType.PDF,
+            canonical_id=record.canonical_id,
+            original_url=record.original_url,
+            normalized_url=record.normalized_url,
+            content_hash=record.content_hash,
+        )
+        inserted = registry.insert(identity, status=ResourceStatus.NEW)
+        record.id = inserted.id
+        record.first_seen_at = inserted.first_seen_at
+        record.last_seen_at = inserted.last_seen_at
+
+    record = pdf_normalizer.normalize(record)
+    registry.update(record)
+    console.print(f"[green]✓[/green] Imported PDF: {record.id}")
 
 
 @app.command("transcribe-media")
