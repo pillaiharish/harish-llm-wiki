@@ -17,13 +17,17 @@ Harish LLM Wiki is a Python pipeline that:
 - **YouTube Integration**: Extract transcripts with timestamp citations
 - **Blog Scraping**: Public webpage extraction (no paywall bypass)
 - **Markdown Import**: Manual import of articles and notes
+- **Local PDF Import**: Page-wise text extraction with page-citation chunks
 - **Deduplication**: Detects duplicates by URL/content hash
 - **LLM Notes**: Generates Karpathy-inspired first-principles explanations with provenance
-- **Citations**: Timestamp citations for YouTube, section/paragraph for text
+- **Citations**: Timestamp citations for YouTube, section/paragraph for text, page numbers for PDFs
 - **Timeline**: Chronological learning trail
 - **Tags**: Browse resources by topic
 - **Concepts**: Auto-extracted concept pages
 - **Gaps**: Knowledge gaps that need attention
+- **Knowledge Graph**: Deterministic nodes/edges exported as JSON
+- **Graph Viewer**: Static page with search, filters, and neighbor explorer
+- **Resource Relationships**: Deterministic same-source-type / shared-topic edges
 - **Search**: VitePress built-in search
 - **Static Site**: No backend required for reading
 
@@ -534,6 +538,29 @@ python -m wiki build-site --refresh
 The `add-media` command prints the `media:<hash>` resource ID. Use that exact ID in `transcribe-media` and `process-new`.
 
 Transcription uses `ffmpeg` to normalize audio to 16 kHz mono WAV. Local Whisper support requires `pip install -e ".[asr-whisper]"`; faster-whisper requires `pip install -e ".[asr-faster-whisper]"`. For a dependency-free smoke test of the media pipeline, use `--provider mock`.
+
+## Local PDF
+
+Local PDFs are read with `pypdf` and ingested as a first-class resource type. Page text is extracted deterministically; chunks are grouped by contiguous page ranges with stable page-level citations.
+
+```bash
+python -m wiki import-pdf --file ./inputs/papers/attention.pdf --title "Attention Is All You Need"
+python -m wiki import-pdf --file ./inputs/papers/attention.pdf --title "Attention Is All You Need" --copy-file
+python -m wiki process-new --only-stale --skip-ingest --provider ollama_cloud --resource-id pdf:<sha256> --yes
+python -m wiki build-site --refresh
+```
+
+Optional flags:
+
+- `--title` — override the title (otherwise the PDF's `/Title` metadata is used, falling back to the filename stem).
+- `--source-url` — record a canonical online URL for the PDF when one is available.
+- `--tags` — comma-separated tags written to the record.
+- `--copy-file` / `--no-copy-file` — opt-in copy of the original PDF into `~/llm-wiki-data/media/pdfs/<sha256>.pdf`. The default is `--no-copy-file`; the SHA-256 ties subsequent imports of the same path to the same record.
+- `--force` — re-ingest even if a record with the same canonical id already exists.
+
+The `import-pdf` command prints the `pdf:<sha256>` resource ID. Use that exact ID in `process-new` if you want to process only that resource.
+
+Encrypted or scanned PDFs are not supported in this prompt; image-only pages are recorded in `extraction_warnings` but not OCR'd.
 
 ## Existing Transcript
 

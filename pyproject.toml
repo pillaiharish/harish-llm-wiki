@@ -36,6 +36,7 @@ dependencies = [
     "trafilatura>=1.6.0",
     "readability-lxml>=0.8.1",
     "markdownify>=0.11.0",
+    "pypdf>=4.0.0",
 ]
 
 [project.optional-dependencies]

@@ -22,6 +22,7 @@ class SourceType(str, Enum):
     LOCAL_VIDEO = "local_video"
     LOCAL_AUDIO = "local_audio"
     LOCAL_TRANSCRIPT = "local_transcript"
+    PDF = "pdf"
 
 
 class ResourceStatus(str, Enum):
@@ -224,8 +225,25 @@ class MediaTranscriptChunk(SourceChunk):
         return f"{start}-{end}"
 
 
+class PdfChunk(SourceChunk):
+    """A citeable chunk from a local PDF document."""
+
+    source_type: SourceType = SourceType.PDF
+    page_start: int
+    page_end: int
+    title: Optional[str] = None
+    file_path: Optional[str] = None
+
+    @property
+    def citation_label_formatted(self) -> str:
+        """Format as page or page-range reference."""
+        if self.page_start == self.page_end:
+            return f"page {self.page_start}"
+        return f"pages {self.page_start}-{self.page_end}"
+
+
 # Union type for all chunks
-ChunkType = YouTubeChunk | WebpageChunk | MarkdownChunk | MediaTranscriptChunk
+ChunkType = YouTubeChunk | WebpageChunk | MarkdownChunk | MediaTranscriptChunk | PdfChunk
 
 
 # =============================================================================
