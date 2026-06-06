@@ -19,6 +19,9 @@ Routes checked
 - ``/search/bm25`` -> ``search/bm25.md`` (Prompt 28 BM25 report page)
 - ``/public/search/bm25_index.json`` -> ``public/search/bm25_index.json``
 - ``/public/search/bm25_manifest.json`` -> ``public/search/bm25_manifest.json``
+- ``/search/vector`` -> ``search/vector.md`` (Prompt 29 vector report page)
+- ``/public/search/vector_index.json`` -> ``public/search/vector_index.json``
+- ``/public/search/vector_manifest.json`` -> ``public/search/vector_manifest.json``
 
 Usage
 -----
@@ -65,6 +68,10 @@ def _expected_routes(site_dir: Path) -> List[Tuple[str, Path]]:
         ("/search/bm25", site_dir / "search" / "bm25.md"),
         ("/public/search/bm25_index.json", site_dir / "public" / "search" / "bm25_index.json"),
         ("/public/search/bm25_manifest.json", site_dir / "public" / "search" / "bm25_manifest.json"),
+        # Prompt 29 additions
+        ("/search/vector", site_dir / "search" / "vector.md"),
+        ("/public/search/vector_index.json", site_dir / "public" / "search" / "vector_index.json"),
+        ("/public/search/vector_manifest.json", site_dir / "public" / "search" / "vector_manifest.json"),
     ]
 
 
