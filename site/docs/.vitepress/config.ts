@@ -117,6 +117,15 @@ export default defineConfig({
             { text: 'Overview', link: '/chunks/' },
           ]
         }
+      ],
+      '/search/': [
+        {
+          text: 'BM25 Search',
+          items: [
+            { text: 'BM25 Report', link: '/search/bm25' },
+            { text: 'BM25 Manifest (JSON)', link: '/public/search/bm25_manifest.json' },
+          ]
+        }
       ]
     },
 

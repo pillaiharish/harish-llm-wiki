@@ -29,6 +29,7 @@ Harish LLM Wiki is a Python pipeline that:
 - **Graph Viewer**: Static page with search, filters, and neighbor explorer
 - **Resource Relationships**: Deterministic same-source-type / shared-topic edges
 - **Chunk Index**: Deterministic, citation-aware chunk index for future search and retrieval
+- **BM25 Search**: Deterministic lexical search backend over the chunk index (no embeddings, no vector DB)
 - **Search**: VitePress built-in search
 - **Static Site**: No backend required for reading
 
@@ -258,6 +259,69 @@ python -m wiki smoke-site
 
 # Full pipeline: process + build + validate
 python -m wiki full-run
+```
+
+### BM25 Search Backend
+
+The BM25 lexical search backend (Prompt 28) consumes the chunk index
+and produces a deterministic inverted index for keyword search. It
+is the lexical half of the planned hybrid retrieval router; the
+vector half (embeddings) and the graph retriever belong to later
+prompts.
+
+The BM25 backend:
+
+- depends on **no new runtime libraries**; the scorer is a small
+  pure-Python module under `wiki/search/`;
+- uses the same tokenizer at index time and query time (lowercasing,
+  punctuation stripping, bundled stopword list, length filter);
+- is byte-stable: same chunk index + same query = same ranking;
+- ties broken deterministically by `chunk_id` ascending.
+
+CLI commands:
+
+```bash
+# Build the BM25 index (rebuilds the chunk index first by default).
+python -m wiki build-bm25-index
+
+# Skip the chunk-index rebuild (assumes it is already current).
+python -m wiki build-bm25-index --no-build-chunk-index
+
+# Search the BM25 index. The default is a Rich table; pass --json
+# to emit a JSON array on stdout.
+python -m wiki search-bm25 "attention transformer"
+python -m wiki search-bm25 "scaled dot-product attention" --json
+python -m wiki search-bm25 "embeddings retrieval" --limit 5
+python -m wiki search-bm25 "vllm paged attention" --source-type youtube
+python -m wiki search-bm25 "rag evaluation" --resource-id pdf:abc...
+```
+
+The on-disk BM25 index lives under
+`data/processed/bm25/index.json` (gitignored; regenerated on every
+build). A small public copy is written to
+`data/site_generated/docs/public/search/bm25_*.json` and a static
+report page to `data/site_generated/docs/search/bm25.md` so the
+VitePress site can link to it. The static report page is at
+`/search/bm25` in the built site.
+
+Example queries (also in the static report page):
+
+- `attention transformer` – top result is the
+  "Attention Is All You Need" paper chunk.
+- `scaled dot-product attention` – top result is the
+  `Scaled Dot-Product Attention` section.
+- `embeddings retrieval` – top result is an embeddings resource.
+- `vllm paged attention` – top result is a vLLM resource.
+- `rag evaluation` – top result is an evals resource.
+
+Manual verification:
+
+```bash
+# Run the full BM25 search flow against a real PDF.
+.venv/bin/python scripts/verify_bm25_search.py
+
+# Verify that the expected static routes exist on the built site.
+.venv/bin/python scripts/verify_site_static_routes.py
 ```
 
 ## LLM Providers

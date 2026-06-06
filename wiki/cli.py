@@ -56,6 +56,13 @@ from wiki.chunks import (
     write_public_copy as write_public_chunk_copy,
     chunk_index_output_paths,
 )
+from wiki.search import (
+    build_bm25_index as build_bm25_index_fn,
+    write_bm25_index as write_bm25_index_files,
+    write_public_copy as write_public_bm25_copy,
+    bm25_output_paths,
+    search_bm25 as search_bm25_fn,
+)
 from wiki.site.builder import site_builder
 from wiki.enrich.metadata import youtube_metadata_enricher, webpage_metadata_enricher
 from wiki.resource_utils import is_replaceable_title, topic_matches
@@ -333,6 +340,59 @@ def _build_chunk_index_for_manifest(records):
     return result
 
 
+def _build_bm25_index_for_manifest(records, *, chunk_result=None):
+    """Build and export the BM25 lexical index (Prompt 28).
+
+    Returns the :class:`wiki.search.BM25IndexResult` envelope, or
+    ``None`` if the build fails. On failure a warning is logged but
+    the overall build continues, matching the defensive pattern used
+    by the knowledge graph and chunk index steps.
+
+    The BM25 index consumes the chunk index. If ``chunk_result`` is
+    provided (the typical case from ``generate_derived_views``) it
+    is used directly; otherwise the function falls back to re-reading
+    the on-disk chunk index.
+    """
+    if chunk_result is not None and len(chunk_result.chunks) > 0:
+        index_input = chunk_result
+    else:
+        # Re-read the on-disk chunk index.
+        from wiki.chunks import ChunkIndexResult
+        from wiki.chunks.export import chunk_index_output_paths
+
+        paths = chunk_index_output_paths()
+        if not paths["chunks_json"].exists():
+            console.print(
+                "  [yellow]⚠[/yellow] BM25 index build skipped: "
+                "chunk index not found. Run `wiki build-chunk-index` first."
+            )
+            return None
+        try:
+            chunk_data = json.loads(paths["chunks_json"].read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            console.print(
+                f"  [yellow]⚠[/yellow] BM25 index build failed: could not parse "
+                f"chunk index: {exc}"
+            )
+            return None
+        # We only need the chunks list for the BM25 build; the
+        # envelope's other fields are not used by the builder.
+        index_input = ChunkIndexResult(chunks=chunk_data)
+    try:
+        result = build_bm25_index_fn(index_input)
+        write_bm25_index_files(result)
+        try:
+            write_public_bm25_copy()
+        except Exception as exc:  # pragma: no cover - defensive
+            console.print(
+                f"  [yellow]⚠[/yellow] BM25 public copy failed: {exc}"
+            )
+    except Exception as exc:  # pragma: no cover - defensive
+        console.print(f"  [yellow]⚠[/yellow] BM25 index build failed: {exc}")
+        return None
+    return result
+
+
 def generate_derived_views(records=None) -> dict:
     """Regenerate derived views without calling an LLM.
 
@@ -396,6 +456,13 @@ def generate_derived_views(records=None) -> dict:
         console.print("  [green]✓[/green] Chunk index saved")
     else:
         console.print("  [yellow]⚠[/yellow] Chunk index not built")
+
+    console.print("Generating BM25 lexical index...")
+    bm25_result = _build_bm25_index_for_manifest(records, chunk_result=chunk_result)
+    if bm25_result is not None:
+        console.print("  [green]✓[/green] BM25 index saved")
+    else:
+        console.print("  [yellow]⚠[/yellow] BM25 index not built")
 
     console.print("Writing generation manifest...")
     manifest_path = write_generation_manifest(
@@ -1346,6 +1413,198 @@ def generate_revision():
     console.print(f"[green]✓[/green] Revision pages generated: {path}")
 
 
+@app.command("build-bm25-index")
+def build_bm25_index_cmd(
+    refresh: bool = typer.Option(False, "--refresh", help="Rebuild from scratch (no-op; the build is always full)"),
+    index_dir: Optional[Path] = typer.Option(
+        None, "--index-dir", help="Override the processed/bm25/ output directory"
+    ),
+    public_dir: Optional[Path] = typer.Option(
+        None, "--public-dir", help="Override the public site copy output directory"
+    ),
+    build_chunk_index: bool = typer.Option(
+        True,
+        "--build-chunk-index/--no-build-chunk-index",
+        help="Build the chunk index first (default: yes)",
+    ),
+):
+    """Build the deterministic BM25 lexical search index (Prompt 28).
+
+    The BM25 index consumes the chunk index produced by
+    ``wiki build-chunk-index``. By default this command builds the
+    chunk index first (the same call as ``build-chunk-index``);
+    pass ``--no-build-chunk-index`` to skip that step.
+
+    Outputs (deterministic, byte-stable across repeated runs):
+
+    - ``processed/bm25/index.json``
+    - ``processed/bm25/manifest.json``
+    - ``processed/bm25/stats.json`` (the only file that may drift
+      between runs; it carries build timestamps)
+
+    The function also writes a small public copy under
+    ``site_generated/docs/public/search/`` so the VitePress site
+    can serve the manifest at ``/public/search/bm25_manifest.json``.
+    """
+    started = datetime.now(timezone.utc)
+    records = list(registry.get_all())
+
+    if build_chunk_index:
+        chunk_result = build_chunk_index_fn(records)
+        if not index_dir:
+            write_chunk_index_files(chunk_result)
+        else:
+            index_dir.mkdir(parents=True, exist_ok=True)
+            # When overriding the BM25 index dir, also override the
+            # chunk index dir to keep the two consistent. The chunk
+            # index dir lives next to the BM25 dir as
+            # ``../chunk_index``.
+            chunk_dir = index_dir.parent / "chunk_index"
+            chunk_dir.mkdir(parents=True, exist_ok=True)
+            write_chunk_index_files(chunk_result, output_dir=chunk_dir)
+    else:
+        from wiki.chunks import ChunkIndexResult
+        from wiki.chunks.export import chunk_index_output_paths
+
+        paths = chunk_index_output_paths()
+        if not paths["chunks_json"].exists():
+            console.print(
+                "[red]✗[/red] No chunk index found. Run `wiki build-chunk-index` first "
+                "or omit --no-build-chunk-index."
+            )
+            raise typer.Exit(1)
+        try:
+            chunk_data = json.loads(paths["chunks_json"].read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            console.print(f"[red]✗[/red] Could not parse chunk index: {exc}")
+            raise typer.Exit(1) from exc
+        chunk_result = ChunkIndexResult(chunks=chunk_data)
+
+    if not chunk_result.chunks:
+        console.print(
+            "[yellow]⚠[/yellow] Chunk index is empty; BM25 index will be empty too."
+        )
+
+    result = build_bm25_index_fn(chunk_result)
+    if index_dir is not None:
+        index_dir.mkdir(parents=True, exist_ok=True)
+        paths = write_bm25_index_files(result, output_dir=index_dir)
+    else:
+        paths = write_bm25_index_files(result)
+
+    if public_dir is not None:
+        public_paths = write_public_bm25_copy(output_dir=public_dir)
+    else:
+        public_paths = write_public_bm25_copy()
+
+    finished = datetime.now(timezone.utc)
+    duration = (finished - started).total_seconds()
+
+    console.print("[green]✓[/green] BM25 index built")
+    console.print(f"  Chunks indexed:    {result.doc_count}")
+    console.print(f"  Resources:         {len(set(m.get('resource_id', '') for m in result.chunk_meta.values()))}")
+    console.print(f"  Vocab size:        {len(result.vocab)}")
+    console.print(f"  Total postings:    {sum(int(p.get('df', 0)) for p in result.vocab.values())}")
+    console.print(f"  Avg doc length:    {result.avg_doc_length:.2f}")
+    console.print(f"  Output index.json: {paths['index_json']}")
+    console.print(f"  Output manifest:   {paths['manifest']}")
+    console.print(f"  Output stats:      {paths['stats']}")
+    console.print(f"  Public index:      {public_paths['bm25_index_json']}")
+    console.print(f"  Public manifest:   {public_paths['bm25_manifest']}")
+    console.print(f"  Duration:          {duration:.2f}s")
+
+
+@app.command("search-bm25")
+def search_bm25_cmd(
+    query: Optional[str] = typer.Argument(
+        None, help="Search query (positional, required)"
+    ),
+    limit: int = typer.Option(10, "--limit", "-n", help="Maximum number of results (max 100)"),
+    source_type: Optional[List[str]] = typer.Option(
+        None, "--source-type", help="Repeatable filter; restrict to listed source types"
+    ),
+    resource_id: Optional[str] = typer.Option(
+        None, "--resource-id", help="Restrict to a single resource id"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON to stdout"),
+    include_text: bool = typer.Option(
+        False, "--include-text", help="Include the chunk text preview in JSON output"
+    ),
+    index_dir: Optional[Path] = typer.Option(
+        None, "--index-dir", help="Override the processed/bm25/ index directory"
+    ),
+):
+    """Search the BM25 lexical index (Prompt 28).
+
+    Reads the deterministic BM25 index built by
+    ``wiki build-bm25-index`` and prints ranked results. The
+    default output is a Rich table; pass ``--json`` to emit a
+    JSON array on stdout.
+    """
+    if not query or not query.strip():
+        console.print("[red]✗[/red] query is empty")
+        raise typer.Exit(1)
+    if limit < 1:
+        console.print("[red]✗[/red] --limit must be >= 1")
+        raise typer.Exit(1)
+    if limit > 100:
+        console.print("[yellow]⚠[/yellow] --limit capped at 100")
+        limit = 100
+
+    try:
+        results = search_bm25_fn(
+            query,
+            limit=limit,
+            source_types=source_type,
+            resource_id=resource_id,
+            include_text=include_text,
+            index_dir=index_dir,
+        )
+    except FileNotFoundError as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise typer.Exit(1) from exc
+    except ValueError as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        # Sort keys is intentionally False: the dicts are
+        # constructed in stable order.
+        sys.stdout.write(json.dumps([r.to_dict() for r in results], indent=2, ensure_ascii=False))
+        sys.stdout.write("\n")
+        return
+
+    console.print(f'[bold]Query:[/bold] "{query}"')
+    if not results:
+        console.print("[dim]No results.[/dim]")
+        return
+    table = Table(box=box.SIMPLE, show_lines=False)
+    table.add_column("Rank", style="cyan", justify="right")
+    table.add_column("Score", style="green", justify="right")
+    table.add_column("Chunk", style="white")
+    table.add_column("Resource", style="white")
+    table.add_column("Citation", style="white")
+    for r in results:
+        table.add_row(
+            str(r.rank),
+            f"{r.score:.4f}",
+            _truncate(r.chunk_id, 40),
+            _truncate(r.title or r.resource_id, 40),
+            _truncate(r.citation_label, 30),
+        )
+    console.print(table)
+    console.print(f"\n[dim]Showing {len(results)} result(s).[/dim]")
+
+
+def _truncate(text: str, limit: int) -> str:
+    """Truncate ``text`` to ``limit`` characters with an ellipsis."""
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)] + "\u2026"
+
+
 @app.command("generate-flashcards")
 def generate_flashcards(
     provider: str = typer.Option("mock", "--provider", help="Provider for optional future generation"),
@@ -2004,6 +2263,36 @@ def validate(
                 )
         except Exception as exc:
             issues.append(("warning", f"Chunks index read error: {exc}"))
+
+    # Prompt 28: check the BM25 index files.
+    try:
+        from wiki.search import iter_bm25_index_issues
+        from wiki.search.export import bm25_output_paths as _bm25_paths
+        bm25_paths = _bm25_paths()
+        if bm25_paths["index_json"].exists() or bm25_paths["manifest"].exists():
+            try:
+                bm25_issues_list = list(
+                    iter_bm25_index_issues(
+                        index_path=bm25_paths["index_json"],
+                        manifest_path=bm25_paths["manifest"],
+                        stats_path=bm25_paths["stats"],
+                    )
+                )
+            except Exception as exc:
+                issues.append(("warning", f"bm25: validator crashed: {exc}"))
+            else:
+                for severity, code, message in bm25_issues_list:
+                    issues.append((severity, f"bm25: {code}: {message}"))
+    except Exception as exc:  # pragma: no cover - defensive
+        issues.append(("warning", f"bm25: could not import validator: {exc}"))
+
+    # Prompt 28: check the BM25 public copy JSON.
+    bm25_public_manifest = site_builder.repo_site_dir / "public" / "search" / "bm25_manifest.json"
+    if bm25_public_manifest.exists():
+        try:
+            json.loads(bm25_public_manifest.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            issues.append(("warning", f"bm25 public manifest has invalid JSON: {exc}"))
 
     # Print results
     if issues:
