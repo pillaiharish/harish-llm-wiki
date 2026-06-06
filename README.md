@@ -28,6 +28,7 @@ Harish LLM Wiki is a Python pipeline that:
 - **Knowledge Graph**: Deterministic nodes/edges exported as JSON
 - **Graph Viewer**: Static page with search, filters, and neighbor explorer
 - **Resource Relationships**: Deterministic same-source-type / shared-topic edges
+- **Chunk Index**: Deterministic, citation-aware chunk index for future search and retrieval
 - **Search**: VitePress built-in search
 - **Static Site**: No backend required for reading
 

@@ -517,6 +517,22 @@ class TestSmokeAndValidate:
             "# Resources\n\n| Title | Type |\n|---|---|\n",
             encoding="utf-8",
         )
+        # Prompt 27: chunk index public copy and chunks index page.
+        chunks_public = builder.data_site_dir / "public" / "chunks"
+        chunks_public.mkdir(parents=True, exist_ok=True)
+        (chunks_public / "chunks.json").write_text("[]", encoding="utf-8")
+        (chunks_public / "manifest.json").write_text(
+            '{"schema_version": "chunk_index_v1", "chunk_count": 0, '
+            '"resource_count": 0, "by_source_type": {}, '
+            '"by_resource": [], "warnings": []}',
+            encoding="utf-8",
+        )
+        chunks_page = builder.data_site_dir / "chunks"
+        chunks_page.mkdir(parents=True, exist_ok=True)
+        (chunks_page / "index.md").write_text(
+            "# Chunk Index\n\nStub for smoke-site.\n",
+            encoding="utf-8",
+        )
         # Generated_manifest.
         manifest_path = builder.data_site_dir.parent / "processed" / "generated_manifest.json"
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -627,6 +643,21 @@ class TestSmokeAndValidate:
         (builder.repo_site_dir / "resources").mkdir(parents=True, exist_ok=True)
         (builder.repo_site_dir / "resources" / "index.md").write_text(
             "# Resources\n\n",
+            encoding="utf-8",
+        )
+        # Prompt 27: chunk index public copy and chunks index page.
+        (builder.repo_site_dir / "chunks").mkdir(parents=True, exist_ok=True)
+        (builder.repo_site_dir / "chunks" / "index.md").write_text(
+            "# Chunk Index\n\nStub for validate.\n",
+            encoding="utf-8",
+        )
+        chunks_public = builder.repo_site_dir / "public" / "chunks"
+        chunks_public.mkdir(parents=True, exist_ok=True)
+        (chunks_public / "chunks.json").write_text("[]", encoding="utf-8")
+        (chunks_public / "manifest.json").write_text(
+            '{"schema_version": "chunk_index_v1", "chunk_count": 0, '
+            '"resource_count": 0, "by_source_type": {}, '
+            '"by_resource": [], "warnings": []}',
             encoding="utf-8",
         )
         # Generated_manifest for staleness check.

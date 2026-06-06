@@ -2,7 +2,7 @@
 
 from pathlib import Path
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 import hashlib
 import json
 import re
@@ -50,6 +50,12 @@ from wiki.generate.learn import learn_generator
 from wiki.generate.review import review_generator
 from wiki.generate.search import search_index_generator
 from wiki.generate.revision import revision_generator
+from wiki.chunks import (
+    build_chunk_index as build_chunk_index_fn,
+    write_chunk_index as write_chunk_index_files,
+    write_public_copy as write_public_chunk_copy,
+    chunk_index_output_paths,
+)
 from wiki.site.builder import site_builder
 from wiki.enrich.metadata import youtube_metadata_enricher, webpage_metadata_enricher
 from wiki.resource_utils import is_replaceable_title, topic_matches
@@ -235,10 +241,16 @@ def _resource_route_target_exists(local_page: str, site_dir: Path) -> bool:
 
 def write_generation_manifest(records, *, concepts=None, tags=None, topics=None,
                                learn=None, gaps=None, review=None, revision=None,
-                               indexes=None, timeline=None, graph=None) -> Path:
+                               indexes=None, timeline=None, graph=None,
+                               chunks=None) -> Path:
     """Write generated_manifest.json after all derived views finish."""
     timeline_period_count, timeline_entry_count = _timeline_counts(timeline)
     graph_stats = (graph or {}).get("stats", {}) if isinstance(graph, dict) else {}
+    chunk_count = 0
+    chunk_resource_count = 0
+    if chunks is not None:
+        chunk_count = len(chunks.chunks)
+        chunk_resource_count = len(chunks.chunk_count_by_resource)
     manifest = {
         "generated_at": datetime.utcnow().isoformat(),
         "resource_count": len(list(records)) if records else 0,
@@ -254,6 +266,8 @@ def write_generation_manifest(records, *, concepts=None, tags=None, topics=None,
         "timeline_entries": timeline_entry_count,
         "graph_node_count": graph_stats.get("node_count", 0),
         "graph_edge_count": graph_stats.get("edge_count", 0),
+        "chunk_count": chunk_count,
+        "chunk_resource_count": chunk_resource_count,
         "outputs": {
             "concepts": str(config.get_data_path("processed", "concepts")),
             "timeline": str(config.get_data_path("processed", "timeline", "timeline.md")),
@@ -267,6 +281,8 @@ def write_generation_manifest(records, *, concepts=None, tags=None, topics=None,
             "explorer": str(config.get_data_path("site_generated", "docs", "explorer", "index.md")),
             "sources": str(config.get_data_path("site_generated", "docs", "sources", "index.md")),
             "graph": str(config.get_data_path("site_generated", "docs", "public", "graph")),
+            "chunks": str(config.get_data_path("processed", "chunk_index")),
+            "chunks_public": str(config.get_data_path("site_generated", "docs", "public", "chunks")),
         },
     }
     manifest_path = config.get_data_path("processed", "generated_manifest.json")
@@ -291,6 +307,30 @@ def _build_knowledge_graph_for_manifest(records):
         console.print(f"  [yellow]⚠[/yellow] Knowledge graph build failed: {exc}")
         return {}
     return graph
+
+
+def _build_chunk_index_for_manifest(records):
+    """Build and export the chunk index (Prompt 27).
+
+    Returns the :class:`wiki.chunks.ChunkIndexResult` envelope, or
+    ``None`` if the build fails. On failure a warning is logged but
+    the overall build continues, matching the defensive pattern used
+    by the knowledge graph step.
+    """
+    try:
+        result = build_chunk_index_fn(records)
+        write_chunk_index_files(result)
+        # Also write a small public copy so VitePress can serve it.
+        try:
+            write_public_chunk_copy()
+        except Exception as exc:  # pragma: no cover - defensive
+            console.print(
+                f"  [yellow]⚠[/yellow] Chunk index public copy failed: {exc}"
+            )
+    except Exception as exc:  # pragma: no cover - defensive
+        console.print(f"  [yellow]⚠[/yellow] Chunk index build failed: {exc}")
+        return None
+    return result
 
 
 def generate_derived_views(records=None) -> dict:
@@ -350,11 +390,18 @@ def generate_derived_views(records=None) -> dict:
     graph_data = _build_knowledge_graph_for_manifest(records)
     console.print("  [green]✓[/green] Knowledge graph saved")
 
+    console.print("Generating chunk index...")
+    chunk_result = _build_chunk_index_for_manifest(records)
+    if chunk_result is not None:
+        console.print("  [green]✓[/green] Chunk index saved")
+    else:
+        console.print("  [yellow]⚠[/yellow] Chunk index not built")
+
     console.print("Writing generation manifest...")
     manifest_path = write_generation_manifest(
         records, concepts=concept_extractor.concepts, tags=tags, topics=topics,
         learn=learn, gaps=gaps, review=review, revision=revision, indexes=indexes,
-        timeline=periods, graph=graph_data,
+        timeline=periods, graph=graph_data, chunks=chunk_result,
     )
     console.print("  [green]✓[/green] Manifest saved")
 
@@ -366,6 +413,8 @@ def generate_derived_views(records=None) -> dict:
     console.print(f"  Search index items: {manifest['search_index_items']}")
     console.print(f"  Graph nodes: {manifest.get('graph_node_count', 0)}")
     console.print(f"  Graph edges: {manifest.get('graph_edge_count', 0)}")
+    console.print(f"  Chunk index chunks: {manifest.get('chunk_count', 0)}")
+    console.print(f"  Chunk index resources: {manifest.get('chunk_resource_count', 0)}")
 
     return manifest
 
@@ -1222,6 +1271,72 @@ def generate_search_index():
     console.print(f"[green]✓[/green] Search index generated: {path}")
 
 
+@app.command("build-chunk-index")
+def build_chunk_index_cmd(
+    refresh: bool = typer.Option(False, "--refresh", help="Rebuild from scratch (no-op here; the build is always full)"),
+    include_source_type: Optional[List[str]] = typer.Option(
+        None, "--include-source-type", help="Repeatable filter; only listed source types are indexed"
+    ),
+    resource_id: Optional[str] = typer.Option(
+        None, "--resource-id", help="Index a single resource by id"
+    ),
+    limit: Optional[int] = typer.Option(
+        None, "--limit", help="Cap the number of resources processed"
+    ),
+    output_dir: Optional[Path] = typer.Option(
+        None, "--output-dir", help="Override the processed/chunk_index/ output directory"
+    ),
+):
+    """Build the deterministic chunk index (Prompt 27).
+
+    Reads the per-resource ``chunks.jsonl`` files written by the
+    normalizers (PDF, YouTube, webpage, markdown, local transcript,
+    local audio, local video) and emits a uniform index of citeable
+    chunks under ``processed/chunk_index/``.
+
+    Outputs (deterministic, byte-stable across repeated runs):
+
+    - ``processed/chunk_index/chunks.jsonl``
+    - ``processed/chunk_index/chunks.json``
+    - ``processed/chunk_index/manifest.json``
+    - ``processed/chunk_index/stats.json`` (the only file that may
+      drift between runs; it carries build timestamps)
+    """
+    started = datetime.now(timezone.utc)
+    records = list(registry.get_all())
+    result = build_chunk_index_fn(
+        records,
+        include_source_types=include_source_type,
+        resource_id=resource_id,
+        limit=limit,
+    )
+    if output_dir is not None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        paths = write_chunk_index_files(result, output_dir=output_dir)
+    else:
+        paths = write_chunk_index_files(result)
+
+    # Also refresh the small public copy so the VitePress site can
+    # serve the index. The public copy is a deterministic JSON
+    # mirror of the data-dir files.
+    public_paths = write_public_chunk_copy()
+
+    finished = datetime.now(timezone.utc)
+    duration = (finished - started).total_seconds()
+
+    console.print("[green]✓[/green] Chunk index built")
+    console.print(f"  Total chunks: {len(result.chunks)}")
+    console.print(f"  Total resources indexed: {len(result.chunk_count_by_resource)}")
+    console.print(f"  Output chunks.jsonl: {paths['chunks_jsonl']}")
+    console.print(f"  Output chunks.json: {paths['chunks_json']}")
+    console.print(f"  Output manifest.json: {paths['manifest']}")
+    console.print(f"  Output stats.json: {paths['stats']}")
+    console.print(f"  Public chunks.json: {public_paths['chunks_json']}")
+    console.print(f"  Public manifest.json: {public_paths['manifest']}")
+    console.print(f"  Warnings: {len(result.warnings)}")
+    console.print(f"  Duration: {duration:.2f}s")
+
+
 @app.command("generate-revision")
 def generate_revision():
     """Generate revision pages and deterministic flashcards."""
@@ -1529,6 +1644,31 @@ def smoke_site():
                         ("Graph viewer", f"Missing required marker: {needle!r}")
                     )
 
+    # Prompt 27: check the chunk index JSON files.
+    expected_chunk_json = [
+        ("Chunk index chunks.json", site_dir / "public" / "chunks" / "chunks.json"),
+        ("Chunk index manifest.json", site_dir / "public" / "chunks" / "manifest.json"),
+    ]
+    for label, path in expected_chunk_json:
+        if not path.exists():
+            errors.append((label, f"Missing: {path}"))
+            continue
+        try:
+            json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            errors.append((label, f"Invalid JSON in {path}: {exc}"))
+
+    # Prompt 27: check the chunks index page.
+    chunks_index_page = site_dir / "chunks" / "index.md"
+    if chunks_index_page.exists():
+        try:
+            chunks_index_content = chunks_index_page.read_text(encoding="utf-8")
+            size = len(chunks_index_content)
+            if size < 50:
+                warnings.append(("Chunks index page", f"Too small ({size} bytes)"))
+        except Exception as exc:
+            warnings.append(("Chunks index page", f"Read error: {exc}"))
+
     if errors:
         console.print(f"[red]Smoke test found {len(errors)} error(s) and {len(warnings)} warning(s):[/red]\n")
         for label, msg in errors:
@@ -1545,8 +1685,10 @@ def smoke_site():
 
     page_count = sum(1 for _, p in expected_pages if p.exists())
     json_count = sum(1 for _, p in expected_json if p.exists())
+    chunk_json_count = sum(1 for _, p in expected_chunk_json if p.exists())
     console.print(f"  Pages checked: {page_count}/{len(expected_pages)}")
     console.print(f"  JSON files checked: {json_count}/{len(expected_json)}")
+    console.print(f"  Chunk JSON files checked: {chunk_json_count}/{len(expected_chunk_json)}")
 
 
 @app.command()
@@ -1589,6 +1731,9 @@ def validate(
         ("Timeline page", site_builder.repo_site_dir / "timeline.md"),
         ("Gaps page", site_builder.repo_site_dir / "gaps.md"),
         ("graph viewer", site_builder.repo_site_dir / "graph" / "viewer.md"),
+        ("chunks index page", site_builder.repo_site_dir / "chunks" / "index.md"),
+        ("chunks public chunks.json", site_builder.repo_site_dir / "public" / "chunks" / "chunks.json"),
+        ("chunks public manifest.json", site_builder.repo_site_dir / "public" / "chunks" / "manifest.json"),
     ]
     for label, path in expected_site_files:
         if not path.exists():
@@ -1597,11 +1742,33 @@ def validate(
         if path.suffix == ".json":
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
-                items = data.get("items", [])
-                if not items:
-                    issues.append(("warning", f"{label} has empty items array"))
             except json.JSONDecodeError as exc:
                 issues.append(("warning", f"{label} has invalid JSON: {exc}"))
+                continue
+            # Some JSON files are list payloads (chunk index, etc.);
+            # others are dicts with an ``items`` key (search index).
+            # Chunk index public files are dict manifests where
+            # emptiness is reported as ``chunk_count == 0``.
+            if isinstance(data, dict):
+                if "items" in data and not data["items"]:
+                    issues.append(
+                        ("warning", f"{label} has empty items array")
+                    )
+                elif "chunk_count" in data and data.get("chunk_count", 0) == 0:
+                    # chunk index manifest with no chunks: only
+                    # warn if this is unexpected; keep silent to
+                    # avoid noise on empty wikis.
+                    pass
+            elif isinstance(data, list):
+                if not data:
+                    issues.append(("warning", f"{label} has empty list"))
+            else:
+                issues.append(
+                    (
+                        "warning",
+                        f"{label} root is not a list or dict: {type(data).__name__}",
+                    )
+                )
             continue
         try:
             content = path.read_text(encoding="utf-8")
@@ -1800,6 +1967,43 @@ def validate(
                 )
         except Exception as exc:
             issues.append(("warning", f"Graph viewer read error: {exc}"))
+
+    # Prompt 27: check the chunk index files.
+    try:
+        from wiki.chunks import iter_chunk_index_issues
+        from wiki.chunks.export import chunk_index_output_paths
+        chunk_paths = chunk_index_output_paths()
+        if chunk_paths["chunks_json"].exists() or chunk_paths["chunks_jsonl"].exists():
+            try:
+                chunk_issues = list(
+                    iter_chunk_index_issues(
+                        chunks_jsonl_path=chunk_paths["chunks_jsonl"],
+                        chunks_json_path=chunk_paths["chunks_json"],
+                        manifest_path=chunk_paths["manifest"],
+                    )
+                )
+            except Exception as exc:
+                issues.append(("warning", f"chunk_index: validator crashed: {exc}"))
+            else:
+                for severity, code, message in chunk_issues:
+                    issues.append((severity, f"chunk_index: {code}: {message}"))
+    except Exception as exc:  # pragma: no cover - defensive
+        issues.append(("warning", f"chunk_index: could not import validator: {exc}"))
+
+    # Prompt 27: check the chunks index Markdown page.
+    chunks_index_page = site_builder.repo_site_dir / "chunks" / "index.md"
+    if chunks_index_page.exists():
+        try:
+            chunks_content = chunks_index_page.read_text(encoding="utf-8")
+            if "public/chunks/chunks.json" not in chunks_content:
+                issues.append(
+                    (
+                        "warning",
+                        "Chunks index page does not reference /public/chunks/chunks.json",
+                    )
+                )
+        except Exception as exc:
+            issues.append(("warning", f"Chunks index read error: {exc}"))
 
     # Print results
     if issues:
