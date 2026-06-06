@@ -30,7 +30,8 @@ export default defineConfig({
       { text: 'Timeline', link: '/timeline' },
       { text: 'Concepts', link: '/concepts/' },
       { text: 'Tags', link: '/tags/' },
-      { text: 'Gaps', link: '/gaps' }
+      { text: 'Gaps', link: '/gaps' },
+      { text: 'Chunks', link: '/chunks/' }
     ],
 
     sidebar: {
@@ -106,6 +107,14 @@ export default defineConfig({
             { text: 'Index', link: '/graph/' },
             { text: 'Viewer', link: '/graph/viewer' },
             { text: 'Resource relationships', link: '/graph/resource-relationships' },
+          ]
+        }
+      ],
+      '/chunks/': [
+        {
+          text: 'Chunks',
+          items: [
+            { text: 'Overview', link: '/chunks/' },
           ]
         }
       ]
