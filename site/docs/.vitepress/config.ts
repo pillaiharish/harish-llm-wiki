@@ -125,6 +125,13 @@ export default defineConfig({
             { text: 'BM25 Report', link: '/search/bm25' },
             { text: 'BM25 Manifest (JSON)', link: '/public/search/bm25_manifest.json' },
           ]
+        },
+        {
+          text: 'Vector Search',
+          items: [
+            { text: 'Vector Report', link: '/search/vector' },
+            { text: 'Vector Manifest (JSON)', link: '/public/search/vector_manifest.json' },
+          ]
         }
       ]
     },

@@ -30,6 +30,7 @@ Harish LLM Wiki is a Python pipeline that:
 - **Resource Relationships**: Deterministic same-source-type / shared-topic edges
 - **Chunk Index**: Deterministic, citation-aware chunk index for future search and retrieval
 - **BM25 Search**: Deterministic lexical search backend over the chunk index (no embeddings, no vector DB)
+- **Vector Search**: Deterministic local hashing TF-IDF vector search over the chunk index (no model embeddings, no FAISS / Chroma / LanceDB)
 - **Search**: VitePress built-in search
 - **Static Site**: No backend required for reading
 
@@ -322,6 +323,58 @@ Manual verification:
 
 # Verify that the expected static routes exist on the built site.
 .venv/bin/python scripts/verify_site_static_routes.py
+```
+
+### Vector Search Backend
+
+The local vector search backend (Prompt 29) consumes the chunk
+index and produces a deterministic hashing TF-IDF vector index.
+It is the vector half of the planned hybrid retrieval router;
+the graph retriever, hybrid router, and model-based embeddings
+(Ollama, sentence-transformers, OpenAI) belong to later prompts.
+
+The vector backend:
+
+- depends on **no new runtime libraries**; the vectorizer is a
+  small pure-Python module under `wiki/vector/`;
+- uses a hashing TF-IDF vectorizer (signed blake2b feature hash)
+  with cosine similarity over L2-normalized vectors;
+- uses the same tokenizer as the BM25 backend (lowercasing,
+  punctuation stripping, bundled stopword list, length filter);
+- is byte-stable: same chunk index + same query = same ranking;
+- ties broken deterministically by `chunk_id` ascending.
+
+CLI commands:
+
+```bash
+# Build the vector index (rebuilds the chunk index first by default).
+python -m wiki build-vector-index
+
+# Skip the chunk-index rebuild (assumes it is already current).
+python -m wiki build-vector-index --no-build-chunk-index
+
+# Search the vector index. The default is a Rich table; pass --json
+# to emit a JSON array on stdout.
+python -m wiki search-vector "attention transformer"
+python -m wiki search-vector "scaled dot-product attention" --json
+python -m wiki search-vector "embeddings retrieval" --limit 5
+python -m wiki search-vector "vllm paged attention" --source-type pdf
+python -m wiki search-vector "rag evaluation" --resource-id pdf:abc...
+```
+
+The on-disk vector index lives under
+`data/processed/vector/index.json` (gitignored; regenerated on every
+build). A small public copy is written to
+`data/site_generated/docs/public/search/vector_*.json` and a static
+report page to `data/site_generated/docs/search/vector.md` so the
+VitePress site can link to it. The static report page is at
+`/search/vector` in the built site.
+
+Manual verification:
+
+```bash
+# Run the full vector search flow against a real PDF.
+.venv/bin/python scripts/verify_vector_search.py
 ```
 
 ## LLM Providers

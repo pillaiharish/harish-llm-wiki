@@ -94,6 +94,14 @@ class SiteBuilder:
         self._build_bm25_search_page()
         self._build_bm25_public_copy()
 
+        # Build the vector search report page + public copy (Prompt 29).
+        # The data-dir files were already written by
+        # ``wiki build-vector-index`` (or by the
+        # ``generate_derived_views`` integration). We only need
+        # the public copy and the Markdown report page here.
+        self._build_vector_search_page()
+        self._build_vector_public_copy()
+
         self._copy_generated_section("public")
 
         # Build gaps page
@@ -857,6 +865,147 @@ Do not publish publicly unless content is appropriate for public sharing.
             write_bm25_public()
         except Exception as exc:  # pragma: no cover - defensive
             print(f"  [yellow]⚠[/yellow] BM25 public copy failed: {exc}")
+
+    def _build_vector_search_page(self) -> None:
+        """Build a small Markdown landing page for the vector search (Prompt 29).
+
+        The page lists index stats and example queries. It is
+        regenerated from the on-disk manifest so it always
+        reflects the latest vector index state. If the vector
+        index has not been built, the page falls back to a short
+        pointer to ``wiki build-vector-index``.
+        """
+        from wiki.vector.export import vector_output_paths
+
+        vector_paths = vector_output_paths()
+        search_dir = self.data_site_dir / "search"
+        search_dir.mkdir(parents=True, exist_ok=True)
+
+        chunk_count = 0
+        resource_count = 0
+        dimension = 0
+        vocab_size = 0
+        total_nnz = 0
+        by_source_type: dict[str, int] = {}
+        vector_built = vector_paths["manifest"].exists()
+        if vector_built:
+            try:
+                manifest_data = Storage.read_json(vector_paths["manifest"])
+                chunk_count = int(manifest_data.get("chunk_count", 0))
+                resource_count = int(manifest_data.get("resource_count", 0))
+                dimension = int(manifest_data.get("dimension", 0))
+                vocab_size = int(manifest_data.get("vocab_size", 0))
+                total_nnz = int(manifest_data.get("total_nnz", 0))
+                by_source_type = dict(manifest_data.get("by_source_type") or {})
+            except Exception as exc:  # pragma: no cover - defensive
+                print(f"  [yellow]⚠[/yellow] Vector manifest read failed: {exc}")
+                vector_built = False
+
+        lines: list[str] = [
+            "# Vector Search",
+            "",
+            "Deterministic local vector search over the chunk index (Prompt 29).",
+            "",
+            "The vector backend is a small pure-Python hashing TF-IDF",
+            "implementation: each chunk is mapped to a fixed-dimension",
+            "sparse vector with a signed blake2b hash, weighted by TF-IDF,",
+            "L2-normalized, and scored against queries with cosine",
+            "similarity. It is the vector half of the planned hybrid",
+            "retrieval router; the graph retriever, hybrid router, and",
+            "model-based embeddings (Ollama, sentence-transformers, OpenAI)",
+            "belong to later prompts.",
+            "",
+            "| File | Purpose |",
+            "|---|---|",
+            "| [/public/search/vector_index.json](/public/search/vector_index.json) | Public vocab summary (term -> IDF weight) |",
+            "| [/public/search/vector_manifest.json](/public/search/vector_manifest.json) | Public manifest mirror |",
+            "",
+            "## Stats",
+            "",
+            f"- Schema version: `vector_index_v1`",
+            f"- Chunks indexed: {chunk_count}",
+            f"- Resources: {resource_count}",
+            f"- Dimension: {dimension}",
+            f"- Vocab size: {vocab_size}",
+            f"- Total NNZ: {total_nnz}",
+        ]
+        if by_source_type:
+            lines.extend([
+                "",
+                "### By source type",
+                "",
+                "| Source type | Chunk count |",
+                "|---|---:|",
+            ])
+            for source_type, count in sorted(by_source_type.items()):
+                lines.append(f"| {source_type} | {count} |")
+        if not vector_built:
+            lines.extend([
+                "",
+                "## Build the vector index",
+                "",
+                "The vector index has not been built yet. Run:",
+                "",
+                "```",
+                ".venv/bin/python -m wiki build-vector-index",
+                "```",
+                "",
+                "Or rebuild the derived views:",
+                "",
+                "```",
+                ".venv/bin/python -m wiki build-site --refresh",
+                "```",
+                "",
+            ])
+        else:
+            lines.extend([
+                "",
+                "## Example queries",
+                "",
+                "These are the canonical example queries from `prompt29.md`. Each",
+                "can be reproduced with the CLI:",
+                "",
+                "```",
+                ".venv/bin/python -m wiki search-vector \"attention transformer\"",
+                ".venv/bin/python -m wiki search-vector \"scaled dot-product attention\"",
+                ".venv/bin/python -m wiki search-vector \"embeddings retrieval\"",
+                ".venv/bin/python -m wiki search-vector \"vllm paged attention\"",
+                ".venv/bin/python -m wiki search-vector \"rag evaluation\"",
+                "```",
+                "",
+                "Pass `--json` to emit a JSON array on stdout, suitable for piping",
+                "into a downstream retrieval pipeline.",
+                "",
+            ])
+
+        lines.extend([
+            "## Provenance",
+            "",
+            "- Generated by `wiki build-vector-index` (or as part of `wiki build-site --refresh`).",
+            "- Deterministic: no LLM, no embeddings, no model-based vector search, no FAISS / Chroma / LanceDB.",
+            "- Pure-Python hashing TF-IDF vectorizer with cosine similarity over L2-normalized vectors.",
+            "",
+        ])
+        Storage.write_text("\n".join(lines), search_dir / "vector.md")
+
+    def _build_vector_public_copy(self) -> None:
+        """Write a small public copy of the vector index into the site dir.
+
+        This is the in-repo copy under
+        ``self.data_site_dir / public / search``. The data-dir files
+        are the source of truth; this copy is what VitePress serves
+        at ``/public/search/...``.
+
+        The function is defensive: if the data-dir files do not
+        exist, it writes a valid empty pair so the static copy
+        never breaks the build.
+        """
+        from wiki.vector import write_public_copy as write_vector_public
+
+        try:
+            write_vector_public()
+        except Exception as exc:  # pragma: no cover - defensive
+            print(f"  [yellow]⚠[/yellow] Vector public copy failed: {exc}")
     
     def _sync_to_repo_site(self) -> None:
         """Sync generated content to repo site directory."""

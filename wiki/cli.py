@@ -63,6 +63,13 @@ from wiki.search import (
     bm25_output_paths,
     search_bm25 as search_bm25_fn,
 )
+from wiki.vector import (
+    VectorizerConfig,
+    build_vector_index as build_vector_index_fn,
+    search_vector_in_memory,
+    write_public_copy as write_public_vector_copy,
+    write_vector_index as write_vector_index_files,
+)
 from wiki.site.builder import site_builder
 from wiki.enrich.metadata import youtube_metadata_enricher, webpage_metadata_enricher
 from wiki.resource_utils import is_replaceable_title, topic_matches
@@ -249,7 +256,7 @@ def _resource_route_target_exists(local_page: str, site_dir: Path) -> bool:
 def write_generation_manifest(records, *, concepts=None, tags=None, topics=None,
                                learn=None, gaps=None, review=None, revision=None,
                                indexes=None, timeline=None, graph=None,
-                               chunks=None) -> Path:
+                               chunks=None, vector=None) -> Path:
     """Write generated_manifest.json after all derived views finish."""
     timeline_period_count, timeline_entry_count = _timeline_counts(timeline)
     graph_stats = (graph or {}).get("stats", {}) if isinstance(graph, dict) else {}
@@ -258,6 +265,11 @@ def write_generation_manifest(records, *, concepts=None, tags=None, topics=None,
     if chunks is not None:
         chunk_count = len(chunks.chunks)
         chunk_resource_count = len(chunks.chunk_count_by_resource)
+    vector_chunk_count = 0
+    vector_resource_count = 0
+    if vector is not None:
+        vector_chunk_count = int(getattr(vector, "chunk_count", 0) or 0)
+        vector_resource_count = int(getattr(vector, "resource_count", 0) or 0)
     manifest = {
         "generated_at": datetime.utcnow().isoformat(),
         "resource_count": len(list(records)) if records else 0,
@@ -275,6 +287,8 @@ def write_generation_manifest(records, *, concepts=None, tags=None, topics=None,
         "graph_edge_count": graph_stats.get("edge_count", 0),
         "chunk_count": chunk_count,
         "chunk_resource_count": chunk_resource_count,
+        "vector_doc_count": vector_chunk_count,
+        "vector_resource_count": vector_resource_count,
         "outputs": {
             "concepts": str(config.get_data_path("processed", "concepts")),
             "timeline": str(config.get_data_path("processed", "timeline", "timeline.md")),
@@ -290,6 +304,8 @@ def write_generation_manifest(records, *, concepts=None, tags=None, topics=None,
             "graph": str(config.get_data_path("site_generated", "docs", "public", "graph")),
             "chunks": str(config.get_data_path("processed", "chunk_index")),
             "chunks_public": str(config.get_data_path("site_generated", "docs", "public", "chunks")),
+            "vector": str(config.get_data_path("processed", "vector")),
+            "vector_public": str(config.get_data_path("site_generated", "docs", "public", "search")),
         },
     }
     manifest_path = config.get_data_path("processed", "generated_manifest.json")
@@ -393,6 +409,56 @@ def _build_bm25_index_for_manifest(records, *, chunk_result=None):
     return result
 
 
+def _build_vector_index_for_manifest(records, *, chunk_result=None):
+    """Build and export the deterministic vector search index (Prompt 29).
+
+    Returns the :class:`wiki.vector.VectorIndexResult` envelope, or
+    ``None`` if the build fails. On failure a warning is logged but
+    the overall build continues, matching the defensive pattern used
+    by the BM25, knowledge graph, and chunk index steps.
+
+    The vector index consumes the chunk index. If ``chunk_result`` is
+    provided (the typical case from ``generate_derived_views``) it is
+    used directly; otherwise the function falls back to re-reading the
+    on-disk chunk index.
+    """
+    if chunk_result is not None and len(chunk_result.chunks) > 0:
+        index_input = chunk_result
+    else:
+        from wiki.chunks import ChunkIndexResult
+        from wiki.chunks.export import chunk_index_output_paths
+
+        paths = chunk_index_output_paths()
+        if not paths["chunks_json"].exists():
+            console.print(
+                "  [yellow]⚠[/yellow] Vector index build skipped: "
+                "chunk index not found. Run `wiki build-chunk-index` first."
+            )
+            return None
+        try:
+            chunk_data = json.loads(paths["chunks_json"].read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            console.print(
+                f"  [yellow]⚠[/yellow] Vector index build failed: could not parse "
+                f"chunk index: {exc}"
+            )
+            return None
+        index_input = ChunkIndexResult(chunks=chunk_data)
+    try:
+        result = build_vector_index_fn(index_input)
+        write_vector_index_files(result)
+        try:
+            write_public_vector_copy()
+        except Exception as exc:  # pragma: no cover - defensive
+            console.print(
+                f"  [yellow]⚠[/yellow] Vector public copy failed: {exc}"
+            )
+    except Exception as exc:  # pragma: no cover - defensive
+        console.print(f"  [yellow]⚠[/yellow] Vector index build failed: {exc}")
+        return None
+    return result
+
+
 def generate_derived_views(records=None) -> dict:
     """Regenerate derived views without calling an LLM.
 
@@ -464,11 +530,18 @@ def generate_derived_views(records=None) -> dict:
     else:
         console.print("  [yellow]⚠[/yellow] BM25 index not built")
 
+    console.print("Generating vector search index...")
+    vector_result = _build_vector_index_for_manifest(records, chunk_result=chunk_result)
+    if vector_result is not None:
+        console.print("  [green]✓[/green] Vector index saved")
+    else:
+        console.print("  [yellow]⚠[/yellow] Vector index not built")
+
     console.print("Writing generation manifest...")
     manifest_path = write_generation_manifest(
         records, concepts=concept_extractor.concepts, tags=tags, topics=topics,
         learn=learn, gaps=gaps, review=review, revision=revision, indexes=indexes,
-        timeline=periods, graph=graph_data, chunks=chunk_result,
+        timeline=periods, graph=graph_data, chunks=chunk_result, vector=vector_result,
     )
     console.print("  [green]✓[/green] Manifest saved")
 
@@ -482,6 +555,8 @@ def generate_derived_views(records=None) -> dict:
     console.print(f"  Graph edges: {manifest.get('graph_edge_count', 0)}")
     console.print(f"  Chunk index chunks: {manifest.get('chunk_count', 0)}")
     console.print(f"  Chunk index resources: {manifest.get('chunk_resource_count', 0)}")
+    console.print(f"  Vector index chunks: {manifest.get('vector_doc_count', 0)}")
+    console.print(f"  Vector index resources: {manifest.get('vector_resource_count', 0)}")
 
     return manifest
 
@@ -1605,6 +1680,209 @@ def _truncate(text: str, limit: int) -> str:
     return text[: max(0, limit - 1)] + "\u2026"
 
 
+@app.command("build-vector-index")
+def build_vector_index_cmd(
+    refresh: bool = typer.Option(False, "--refresh", help="Rebuild from scratch (no-op; the build is always full)"),
+    index_dir: Optional[Path] = typer.Option(
+        None, "--index-dir", help="Override the processed/vector/ output directory"
+    ),
+    public_dir: Optional[Path] = typer.Option(
+        None, "--public-dir", help="Override the public site copy output directory"
+    ),
+    build_chunk_index: bool = typer.Option(
+        True,
+        "--build-chunk-index/--no-build-chunk-index",
+        help="Build the chunk index first (default: yes)",
+    ),
+    dimension: int = typer.Option(
+        1024, "--dimension", help="Override the hashing vectorizer dimension"
+    ),
+    include_source_type: Optional[List[str]] = typer.Option(
+        None, "--include-source-type", help="Repeatable filter; only listed source types are indexed"
+    ),
+    resource_id: Optional[str] = typer.Option(
+        None, "--resource-id", help="Index a single resource by id"
+    ),
+    limit: Optional[int] = typer.Option(
+        None, "--limit", help="Cap the number of resources processed"
+    ),
+):
+    """Build the deterministic vector search index (Prompt 29).
+
+    The vector index consumes the chunk index produced by
+    ``wiki build-chunk-index``. By default this command builds the
+    chunk index first (the same call as ``build-chunk-index``);
+    pass ``--no-build-chunk-index`` to skip that step.
+
+    The vectorizer is a small pure-Python hashing TF-IDF
+    implementation; the dimension is a vectorizer parameter
+    (default 1024). A different ``dimension`` produces a
+    different (incompatible) index, so the dimension is recorded
+    in the on-disk ``index.json``.
+
+    Outputs (deterministic, byte-stable across repeated runs):
+
+    - ``processed/vector/index.json``
+    - ``processed/vector/manifest.json``
+    - ``processed/vector/stats.json`` (the only file that may drift
+      between runs; it carries build timestamps)
+
+    The function also writes a small public copy under
+    ``site_generated/docs/public/search/`` so the VitePress site
+    can serve the manifest at ``/public/search/vector_manifest.json``.
+    """
+    from wiki.vector import vector_output_paths as _vector_paths
+    started = datetime.now(timezone.utc)
+    records = list(registry.get_all())
+
+    if build_chunk_index:
+        chunk_result = build_chunk_index_fn(
+            records,
+            include_source_types=include_source_type,
+            resource_id=resource_id,
+            limit=limit,
+        )
+        if not index_dir:
+            write_chunk_index_files(chunk_result)
+        else:
+            index_dir.mkdir(parents=True, exist_ok=True)
+            chunk_dir = index_dir.parent / "chunk_index"
+            chunk_dir.mkdir(parents=True, exist_ok=True)
+            write_chunk_index_files(chunk_result, output_dir=chunk_dir)
+    else:
+        from wiki.chunks import ChunkIndexResult
+        from wiki.chunks.export import chunk_index_output_paths
+
+        paths = chunk_index_output_paths()
+        if not paths["chunks_json"].exists():
+            console.print(
+                "[red]✗[/red] No chunk index found. Run `wiki build-chunk-index` first "
+                "or omit --no-build-chunk-index."
+            )
+            raise typer.Exit(1)
+        try:
+            chunk_data = json.loads(paths["chunks_json"].read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            console.print(f"[red]✗[/red] Could not parse chunk index: {exc}")
+            raise typer.Exit(1) from exc
+        chunk_result = ChunkIndexResult(chunks=chunk_data)
+
+    if not chunk_result.chunks:
+        console.print(
+            "[yellow]⚠[/yellow] Chunk index is empty; vector index will be empty too."
+        )
+
+    config_obj = VectorizerConfig(dimension=int(dimension))
+    result = build_vector_index_fn(chunk_result, config=config_obj)
+    if index_dir is not None:
+        index_dir.mkdir(parents=True, exist_ok=True)
+        paths = write_vector_index_files(result, output_dir=index_dir)
+    else:
+        paths = write_vector_index_files(result)
+
+    if public_dir is not None:
+        public_paths = write_public_vector_copy(output_dir=public_dir)
+    else:
+        public_paths = write_public_vector_copy()
+
+    finished = datetime.now(timezone.utc)
+    duration = (finished - started).total_seconds()
+
+    console.print("[green]✓[/green] Vector index built")
+    console.print(f"  Chunks indexed:    {result.chunk_count}")
+    console.print(f"  Resources:         {result.resource_count}")
+    console.print(f"  Dimension:         {result.config.dimension}")
+    console.print(f"  Vocab size:        {result.vocab_size}")
+    console.print(f"  Total NNZ:         {result.total_nnz}")
+    console.print(f"  Output index.json: {paths['index_json']}")
+    console.print(f"  Output manifest:   {paths['manifest']}")
+    console.print(f"  Output stats:      {paths['stats']}")
+    console.print(f"  Public index:      {public_paths['vector_index_json']}")
+    console.print(f"  Public manifest:   {public_paths['vector_manifest']}")
+    console.print(f"  Duration:          {duration:.2f}s")
+
+
+@app.command("search-vector")
+def search_vector_cmd(
+    query: Optional[str] = typer.Argument(
+        None, help="Search query (positional, required)"
+    ),
+    limit: int = typer.Option(10, "--limit", "-n", help="Maximum number of results (max 100)"),
+    source_type: Optional[List[str]] = typer.Option(
+        None, "--source-type", help="Repeatable filter; restrict to listed source types"
+    ),
+    resource_id: Optional[str] = typer.Option(
+        None, "--resource-id", help="Restrict to a single resource id"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON to stdout"),
+    include_text: bool = typer.Option(
+        False, "--include-text", help="Include the chunk text preview in JSON output"
+    ),
+    index_dir: Optional[Path] = typer.Option(
+        None, "--index-dir", help="Override the processed/vector/ index directory"
+    ),
+):
+    """Search the vector search index (Prompt 29).
+
+    Reads the deterministic vector index built by
+    ``wiki build-vector-index`` and prints ranked results. The
+    default output is a Rich table; pass ``--json`` to emit a
+    JSON array on stdout.
+    """
+    from wiki.vector import search_vector as search_vector_fn
+    if not query or not query.strip():
+        console.print("[red]✗[/red] query is empty")
+        raise typer.Exit(1)
+    if limit < 1:
+        console.print("[red]✗[/red] --limit must be >= 1")
+        raise typer.Exit(1)
+    if limit > 100:
+        console.print("[yellow]⚠[/yellow] --limit capped at 100")
+        limit = 100
+
+    try:
+        results = search_vector_fn(
+            query,
+            limit=limit,
+            source_types=source_type,
+            resource_id=resource_id,
+            include_text=include_text,
+            index_dir=index_dir,
+        )
+    except FileNotFoundError as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise typer.Exit(1) from exc
+    except ValueError as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        sys.stdout.write(json.dumps([r.to_dict() for r in results], indent=2, ensure_ascii=False))
+        sys.stdout.write("\n")
+        return
+
+    console.print(f'[bold]Query:[/bold] "{query}"')
+    if not results:
+        console.print("[dim]No results.[/dim]")
+        return
+    table = Table(box=box.SIMPLE, show_lines=False)
+    table.add_column("Rank", style="cyan", justify="right")
+    table.add_column("Score", style="green", justify="right")
+    table.add_column("Chunk", style="white")
+    table.add_column("Resource", style="white")
+    table.add_column("Citation", style="white")
+    for r in results:
+        table.add_row(
+            str(r.rank),
+            f"{r.score:.4f}",
+            _truncate(r.chunk_id, 40),
+            _truncate(r.title or r.resource_id, 40),
+            _truncate(r.citation_label, 30),
+        )
+    console.print(table)
+    console.print(f"\n[dim]Showing {len(results)} result(s).[/dim]")
+
+
 @app.command("generate-flashcards")
 def generate_flashcards(
     provider: str = typer.Option("mock", "--provider", help="Provider for optional future generation"),
@@ -1928,6 +2206,31 @@ def smoke_site():
         except Exception as exc:
             warnings.append(("Chunks index page", f"Read error: {exc}"))
 
+    # Prompt 29: check the vector index public JSON files.
+    expected_vector_json = [
+        ("Vector index vector_index.json", site_dir / "public" / "search" / "vector_index.json"),
+        ("Vector index vector_manifest.json", site_dir / "public" / "search" / "vector_manifest.json"),
+    ]
+    for label, path in expected_vector_json:
+        if not path.exists():
+            warnings.append((label, f"Missing: {path}"))
+            continue
+        try:
+            json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            errors.append((label, f"Invalid JSON in {path}: {exc}"))
+
+    # Prompt 29: check the vector search report page.
+    vector_search_page = site_dir / "search" / "vector.md"
+    if vector_search_page.exists():
+        try:
+            vector_page_content = vector_search_page.read_text(encoding="utf-8")
+            size = len(vector_page_content)
+            if size < 50:
+                warnings.append(("Vector search page", f"Too small ({size} bytes)"))
+        except Exception as exc:
+            warnings.append(("Vector search page", f"Read error: {exc}"))
+
     if errors:
         console.print(f"[red]Smoke test found {len(errors)} error(s) and {len(warnings)} warning(s):[/red]\n")
         for label, msg in errors:
@@ -1945,9 +2248,11 @@ def smoke_site():
     page_count = sum(1 for _, p in expected_pages if p.exists())
     json_count = sum(1 for _, p in expected_json if p.exists())
     chunk_json_count = sum(1 for _, p in expected_chunk_json if p.exists())
+    vector_json_count = sum(1 for _, p in expected_vector_json if p.exists())
     console.print(f"  Pages checked: {page_count}/{len(expected_pages)}")
     console.print(f"  JSON files checked: {json_count}/{len(expected_json)}")
     console.print(f"  Chunk JSON files checked: {chunk_json_count}/{len(expected_chunk_json)}")
+    console.print(f"  Vector JSON files checked: {vector_json_count}/{len(expected_vector_json)}")
 
 
 @app.command()
@@ -2293,6 +2598,36 @@ def validate(
             json.loads(bm25_public_manifest.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
             issues.append(("warning", f"bm25 public manifest has invalid JSON: {exc}"))
+
+    # Prompt 29: check the vector index files.
+    try:
+        from wiki.vector import iter_vector_index_issues
+        from wiki.vector.export import vector_output_paths as _vector_paths
+        vector_paths = _vector_paths()
+        if vector_paths["index_json"].exists() or vector_paths["manifest"].exists():
+            try:
+                vector_issues_list = list(
+                    iter_vector_index_issues(
+                        index_path=vector_paths["index_json"],
+                        manifest_path=vector_paths["manifest"],
+                        stats_path=vector_paths["stats"],
+                    )
+                )
+            except Exception as exc:
+                issues.append(("warning", f"vector: validator crashed: {exc}"))
+            else:
+                for severity, code, message in vector_issues_list:
+                    issues.append((severity, f"vector: {code}: {message}"))
+    except Exception as exc:  # pragma: no cover - defensive
+        issues.append(("warning", f"vector: could not import validator: {exc}"))
+
+    # Prompt 29: check the vector public copy JSON.
+    vector_public_manifest = site_builder.repo_site_dir / "public" / "search" / "vector_manifest.json"
+    if vector_public_manifest.exists():
+        try:
+            json.loads(vector_public_manifest.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            issues.append(("warning", f"vector public manifest has invalid JSON: {exc}"))
 
     # Print results
     if issues:
