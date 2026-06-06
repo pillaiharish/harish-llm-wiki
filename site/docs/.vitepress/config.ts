@@ -132,6 +132,12 @@ export default defineConfig({
             { text: 'Vector Report', link: '/search/vector' },
             { text: 'Vector Manifest (JSON)', link: '/public/search/vector_manifest.json' },
           ]
+        },
+        {
+          text: 'Hybrid Retrieval',
+          items: [
+            { text: 'Retrieval Report', link: '/search/retrieval' },
+          ]
         }
       ]
     },

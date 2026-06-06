@@ -1146,6 +1146,9 @@ class TestVectorBoundaries:
             encoding="utf-8",
         )
 
+        # Prompt 30: hybrid retrieval report page.
+        (tmp_path / "search").joinpath("retrieval.md").write_text("# Retrieval\n", encoding="utf-8")
+
         result_ok = subprocess.run(
             [sys.executable, str(script), "--site-dir", str(tmp_path)],
             capture_output=True,
