@@ -85,6 +85,15 @@ class SiteBuilder:
         self._build_chunks_index_page()
         self._build_chunk_index_public_copy()
 
+        # Build the BM25 search report page + public copy (Prompt 28).
+        # The data-dir files were already written by
+        # ``wiki build-bm25-index`` (or by the
+        # ``generate_derived_views`` integration in
+        # ``wiki.cli.generate_derived_views``). We only need the
+        # public copy and the Markdown report page here.
+        self._build_bm25_search_page()
+        self._build_bm25_public_copy()
+
         self._copy_generated_section("public")
 
         # Build gaps page
@@ -711,6 +720,143 @@ Do not publish publicly unless content is appropriate for public sharing.
             write_public_copy()
         except Exception as exc:  # pragma: no cover - defensive
             print(f"  [yellow]⚠[/yellow] Chunk index public copy failed: {exc}")
+
+    def _build_bm25_search_page(self) -> None:
+        """Build a small Markdown landing page for the BM25 search (Prompt 28).
+
+        The page lists index stats and example queries. It is
+        regenerated from the on-disk manifest so it always
+        reflects the latest BM25 index state. If the BM25 index
+        has not been built, the page falls back to a short
+        pointer to ``wiki build-bm25-index``.
+        """
+        from wiki.search.export import bm25_output_paths
+
+        bm25_paths = bm25_output_paths()
+        search_dir = self.data_site_dir / "search"
+        search_dir.mkdir(parents=True, exist_ok=True)
+
+        doc_count = 0
+        resource_count = 0
+        vocab_size = 0
+        total_postings = 0
+        avg_doc_length = 0.0
+        by_source_type: dict[str, int] = {}
+        bm25_built = bm25_paths["manifest"].exists()
+        if bm25_built:
+            try:
+                manifest_data = Storage.read_json(bm25_paths["manifest"])
+                doc_count = int(manifest_data.get("doc_count", 0))
+                resource_count = int(manifest_data.get("resource_count", 0))
+                vocab_size = int(manifest_data.get("vocab_size", 0))
+                total_postings = int(manifest_data.get("total_postings", 0))
+                avg_doc_length = float(manifest_data.get("avg_doc_length", 0.0))
+                by_source_type = dict(manifest_data.get("by_source_type") or {})
+            except Exception as exc:  # pragma: no cover - defensive
+                print(f"  [yellow]⚠[/yellow] BM25 manifest read failed: {exc}")
+                bm25_built = False
+
+        lines: list[str] = [
+            "# BM25 Search",
+            "",
+            "Deterministic BM25 lexical search over the chunk index (Prompt 28).",
+            "",
+            "BM25 is a classic bag-of-words retrieval function: it scores a query",
+            "against every chunk using term frequency, inverse document frequency,",
+            "and a length-normalization factor. It is the lexical half of the",
+            "planned hybrid retrieval router; the vector half (embeddings) and the",
+            "graph retriever belong to later prompts.",
+            "",
+            "| File | Purpose |",
+            "|---|---|",
+            "| [/public/search/bm25_index.json](/public/search/bm25_index.json) | Public vocab summary (term -> document frequency) |",
+            "| [/public/search/bm25_manifest.json](/public/search/bm25_manifest.json) | Public manifest mirror |",
+            "",
+            "## Stats",
+            "",
+            f"- Schema version: `bm25_index_v1`",
+            f"- Chunks indexed: {doc_count}",
+            f"- Resources: {resource_count}",
+            f"- Vocab size: {vocab_size}",
+            f"- Total postings: {total_postings}",
+            f"- Average doc length (weighted): {avg_doc_length:.2f}",
+        ]
+        if by_source_type:
+            lines.extend([
+                "",
+                "### By source type",
+                "",
+                "| Source type | Chunk count |",
+                "|---|---:|",
+            ])
+            for source_type, count in sorted(by_source_type.items()):
+                lines.append(f"| {source_type} | {count} |")
+        if not bm25_built:
+            lines.extend([
+                "",
+                "## Build the BM25 index",
+                "",
+                "The BM25 index has not been built yet. Run:",
+                "",
+                "```",
+                ".venv/bin/python -m wiki build-bm25-index",
+                "```",
+                "",
+                "Or rebuild the derived views:",
+                "",
+                "```",
+                ".venv/bin/python -m wiki build-site --refresh",
+                "```",
+                "",
+            ])
+        else:
+            lines.extend([
+                "",
+                "## Example queries",
+                "",
+                "These are the canonical example queries from `prompt28.md`. Each",
+                "can be reproduced with the CLI:",
+                "",
+                "```",
+                ".venv/bin/python -m wiki search-bm25 \"attention transformer\"",
+                ".venv/bin/python -m wiki search-bm25 \"scaled dot-product attention\"",
+                ".venv/bin/python -m wiki search-bm25 \"embeddings retrieval\"",
+                ".venv/bin/python -m wiki search-bm25 \"vllm paged attention\"",
+                ".venv/bin/python -m wiki search-bm25 \"rag evaluation\"",
+                "```",
+                "",
+                "Pass `--json` to emit a JSON array on stdout, suitable for piping",
+                "into a downstream retrieval pipeline.",
+                "",
+            ])
+
+        lines.extend([
+            "## Provenance",
+            "",
+            "- Generated by `wiki build-bm25-index` (or as part of `wiki build-site --refresh`).",
+            "- Deterministic: no LLM, no embeddings, no vector search, no FAISS.",
+            "",
+        ])
+        Storage.write_text("\n".join(lines), search_dir / "bm25.md")
+
+    def _build_bm25_public_copy(self) -> None:
+        """Write a small public copy of the BM25 index into the site dir.
+
+        This is the in-repo copy under
+        ``self.data_site_dir / public / search``. The data-dir files
+        are the source of truth; this copy is what VitePress serves
+        at ``/public/search/...``.
+
+        The function is defensive: if the data-dir files do not
+        exist, it writes a valid empty pair so the static copy
+        never breaks the build.
+        """
+        from wiki.search import write_public_copy as write_bm25_public
+
+        try:
+            write_bm25_public()
+        except Exception as exc:  # pragma: no cover - defensive
+            print(f"  [yellow]⚠[/yellow] BM25 public copy failed: {exc}")
     
     def _sync_to_repo_site(self) -> None:
         """Sync generated content to repo site directory."""
