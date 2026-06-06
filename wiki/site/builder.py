@@ -102,6 +102,13 @@ class SiteBuilder:
         self._build_vector_search_page()
         self._build_vector_public_copy()
 
+        # Build the hybrid retrieval report page (Prompt 30).
+        # The page is defensive: it falls back to a "build the
+        # indexes" message if the BM25, vector, and chunk
+        # indexes are all missing. The build never fails on
+        # Prompt 30.
+        self._build_retrieval_page()
+
         self._copy_generated_section("public")
 
         # Build gaps page
@@ -1006,7 +1013,184 @@ Do not publish publicly unless content is appropriate for public sharing.
             write_vector_public()
         except Exception as exc:  # pragma: no cover - defensive
             print(f"  [yellow]⚠[/yellow] Vector public copy failed: {exc}")
-    
+
+    def _build_retrieval_page(self) -> None:
+        """Build a small Markdown landing page for the hybrid retrieval router (Prompt 30).
+
+        The page documents the four modes, the scoring formula,
+        the example commands, and the out-of-scope items. It
+        is regenerated defensively: if the BM25, vector, and
+        chunk indexes are all missing, the page falls back to
+        a "build the indexes" message; the static site build
+        never fails on Prompt 30.
+        """
+        from wiki.search.export import bm25_output_paths
+        from wiki.vector.export import vector_output_paths
+        from wiki.chunks.export import chunk_index_output_paths
+
+        bm25_paths = bm25_output_paths()
+        vector_paths = vector_output_paths()
+        chunk_paths = chunk_index_output_paths()
+
+        search_dir = self.data_site_dir / "search"
+        search_dir.mkdir(parents=True, exist_ok=True)
+
+        bm25_built = bm25_paths["manifest"].exists()
+        vector_built = vector_paths["manifest"].exists()
+        chunk_built = chunk_paths["chunks_json"].exists()
+
+        bm25_doc_count = 0
+        bm25_vocab_size = 0
+        vector_chunk_count = 0
+        vector_dimension = 0
+        chunk_count = 0
+
+        if bm25_built:
+            try:
+                manifest_data = Storage.read_json(bm25_paths["manifest"])
+                bm25_doc_count = int(manifest_data.get("doc_count", 0))
+                bm25_vocab_size = int(manifest_data.get("vocab_size", 0))
+            except Exception as exc:  # pragma: no cover - defensive
+                print(f"  [yellow]⚠[/yellow] BM25 manifest read failed: {exc}")
+                bm25_built = False
+        if vector_built:
+            try:
+                manifest_data = Storage.read_json(vector_paths["manifest"])
+                vector_chunk_count = int(manifest_data.get("chunk_count", 0))
+                vector_dimension = int(manifest_data.get("dimension", 0))
+            except Exception as exc:  # pragma: no cover - defensive
+                print(f"  [yellow]⚠[/yellow] Vector manifest read failed: {exc}")
+                vector_built = False
+        if chunk_built:
+            try:
+                manifest_data = Storage.read_json(chunk_paths["manifest"])
+                chunk_count = int(manifest_data.get("chunk_count", 0))
+            except Exception as exc:  # pragma: no cover - defensive
+                print(f"  [yellow]⚠[/yellow] Chunk manifest read failed: {exc}")
+                chunk_built = False
+
+        lines: list[str] = [
+            "# Hybrid Retrieval",
+            "",
+            "Deterministic hybrid retrieval router (Prompt 30) that unifies the BM25",
+            "lexical backend (Prompt 28), the deterministic local vector backend",
+            "(Prompt 29), and a small bounded graph-lite metadata boost sourced from",
+            "the knowledge graph (Prompt 23 + 24).",
+            "",
+            "## Modes",
+            "",
+            "- **bm25** — use the BM25 lexical backend only.",
+            "- **vector** — use the deterministic vector backend only.",
+            "- **hybrid** (default) — combine BM25 and vector scores with a linear",
+            "  fusion over max-normalized scores.",
+            "- **graph-lite** — `hybrid` plus a small bounded per-chunk boost from",
+            "  the on-disk knowledge graph (same topic, shared concept, source-type",
+            "  preference, resource-relationship edge).",
+            "",
+            "## Scoring formula",
+            "",
+            "Score normalization (deterministic, max-based):",
+            "",
+            "- `n_bm25 = bm25_score / max(bm25_scores_in_candidate_set)`",
+            "- `n_vector = vector_score / max(vector_scores_in_candidate_set)`",
+            "",
+            "Final score (no graph-lite):",
+            "",
+            "```",
+            "final = bm25_weight * n_bm25 + vector_weight * n_vector",
+            "```",
+            "",
+            "Defaults: `bm25_weight = 0.55`, `vector_weight = 0.45`. Both must be",
+            "non-negative and the call is rejected if they sum to zero.",
+            "",
+            "Final score (graph-lite):",
+            "",
+            "```",
+            "final = bm25_weight * n_bm25 + vector_weight * n_vector + graph_boost",
+            "graph_boost in [0.00, 0.10]   (sum of four sub-boosts, each capped)",
+            "```",
+            "",
+            "The four sub-boosts are:",
+            "",
+            "- `same_topic_boost` (max 0.04)",
+            "- `shared_concept_boost` (max 0.03)",
+            "- `source_type_boost` (max 0.02)",
+            "- `resource_relationship_boost` (max 0.01)",
+            "",
+            "## Stats",
+            "",
+            f"- BM25 index built: {bm25_built}",
+            f"- Vector index built: {vector_built}",
+            f"- Chunk index built: {chunk_built}",
+            f"- BM25 chunks: {bm25_doc_count}",
+            f"- BM25 vocab size: {bm25_vocab_size}",
+            f"- Vector chunks: {vector_chunk_count}",
+            f"- Vector dimension: {vector_dimension}",
+            f"- Chunk index chunks: {chunk_count}",
+            "",
+            "## Example commands",
+            "",
+            "```",
+            ".venv/bin/python -m wiki retrieve \"attention transformer\"",
+            ".venv/bin/python -m wiki retrieve \"scaled dot-product attention\" --mode hybrid --json",
+            ".venv/bin/python -m wiki retrieve \"vllm paged attention\" --mode bm25",
+            ".venv/bin/python -m wiki retrieve \"rag evaluation\" --mode vector",
+            ".venv/bin/python -m wiki retrieve \"embeddings retrieval\" --mode graph-lite --explain",
+            "```",
+            "",
+            "Pass `--json` to emit a JSON array of result dicts on stdout. Pass",
+            "`--explain` to include the per-factor graph-lite details in the",
+            "`explanation` block of each result.",
+            "",
+            "## Out of scope",
+            "",
+            "The hybrid retrieval router is a read-only consumer of the BM25, vector,",
+            "chunk, and graph indexes. It does **not** add:",
+            "",
+            "- LLM calls (no Ollama, no OpenAI, no Gemini, no model providers).",
+            "- Model embeddings (no sentence-transformers, no transformers).",
+            "- Vector databases (no FAISS, no Chroma, no LanceDB, no Qdrant, no Milvus).",
+            "- Graph traversal search (the graph-lite boost is a bounded re-ranking",
+            "  signal, not a separate retriever).",
+            "- Answer generation (no answer text, no chat reply).",
+            "- Chatbot UI.",
+            "- OCR, web APIs, or external paid APIs.",
+            "",
+            "## Related pages",
+            "",
+            "- [Chunk index](/chunks/) — the citation-aware chunk index the router",
+            "  reads from.",
+            "- [BM25 report](/search/bm25) — the BM25 lexical backend.",
+            "- [Vector report](/search/vector) — the deterministic local vector backend.",
+            "- [Graph index](/graph/) — the on-disk knowledge graph.",
+            "",
+        ]
+        if not (bm25_built or vector_built or chunk_built):
+            lines.extend([
+                "## Build the indexes",
+                "",
+                "The hybrid retrieval router reads the BM25, vector, and chunk",
+                "indexes. If any of them is missing, the router still works",
+                "for the modes that do not require it, but the candidate set",
+                "may be smaller than expected. To rebuild all three:",
+                "",
+                "```",
+                ".venv/bin/python -m wiki build-site --refresh",
+                "```",
+                "",
+            ])
+
+        lines.extend([
+            "## Provenance",
+            "",
+            "- Generated by `wiki build-site --refresh`.",
+            "- Deterministic: no LLM, no embeddings, no vector DB, no graph traversal.",
+            "- Pure-Python: reuses `wiki.search` (BM25) and `wiki.vector` (hashing TF-IDF).",
+            "",
+        ])
+
+        Storage.write_text("\n".join(lines), search_dir / "retrieval.md")
+
     def _sync_to_repo_site(self) -> None:
         """Sync generated content to repo site directory."""
         # Copy generated docs to repo site

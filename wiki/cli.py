@@ -1883,6 +1883,167 @@ def search_vector_cmd(
     console.print(f"\n[dim]Showing {len(results)} result(s).[/dim]")
 
 
+@app.command("retrieve")
+def retrieve_cmd(
+    query: Optional[str] = typer.Argument(
+        None, help="Search query (positional, required)"
+    ),
+    mode: str = typer.Option(
+        "hybrid",
+        "--mode",
+        help="Retrieval mode: bm25, vector, hybrid, or graph-lite",
+    ),
+    limit: int = typer.Option(10, "--limit", "-n", help="Maximum number of results (max 100)"),
+    source_type: Optional[List[str]] = typer.Option(
+        None, "--source-type", help="Repeatable filter; restrict to listed source types"
+    ),
+    resource_id: Optional[str] = typer.Option(
+        None, "--resource-id", help="Restrict to a single resource id"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON to stdout"),
+    include_text: bool = typer.Option(
+        False, "--include-text", help="Include the chunk text preview in JSON output"
+    ),
+    bm25_weight: float = typer.Option(
+        0.55, "--bm25-weight", help="Weight on the BM25 contribution (hybrid/graph-lite)"
+    ),
+    vector_weight: float = typer.Option(
+        0.45, "--vector-weight", help="Weight on the vector contribution (hybrid/graph-lite)"
+    ),
+    explain: bool = typer.Option(
+        False,
+        "--explain",
+        help="Include verbose per-factor explanation block in each result",
+    ),
+    index_dir: Optional[Path] = typer.Option(
+        None, "--index-dir", help="Override the processed/bm25/ and processed/vector/ index directories"
+    ),
+):
+    """Run a hybrid retrieval query (Prompt 30).
+
+    Combines the BM25 lexical backend (Prompt 28) and the
+    deterministic local vector backend (Prompt 29) and overlays
+    a small bounded graph-lite metadata boost from the
+    knowledge graph (Prompt 23 + 24). Modes:
+
+    - ``bm25`` — use BM25 only.
+    - ``vector`` — use vector only.
+    - ``hybrid`` (default) — combine BM25 and vector scores.
+    - ``graph-lite`` — ``hybrid`` plus a small bounded boost.
+
+    The default output is a Rich table; pass ``--json`` to emit
+    a JSON array of result dicts on stdout. ``--explain`` adds
+    the per-factor graph-lite details to each result.
+    """
+    from wiki.retrieval import (
+        ALLOWED_MODES,
+        DEFAULT_BM25_WEIGHT,
+        DEFAULT_VECTOR_WEIGHT,
+        retrieve_hybrid,
+    )
+
+    if not query or not str(query).strip():
+        console.print("[red]✗[/red] query is empty")
+        raise typer.Exit(1)
+    if mode not in ALLOWED_MODES:
+        console.print(
+            f"[red]✗[/red] invalid --mode: {mode!r} "
+            f"(allowed: {sorted(ALLOWED_MODES)})"
+        )
+        raise typer.Exit(1)
+    if float(bm25_weight) < 0.0 or float(vector_weight) < 0.0:
+        console.print(
+            "[red]✗[/red] --bm25-weight and --vector-weight must be >= 0"
+        )
+        raise typer.Exit(1)
+    if float(bm25_weight) + float(vector_weight) <= 0.0:
+        console.print(
+            "[red]✗[/red] --bm25-weight + --vector-weight must sum to > 0"
+        )
+        raise typer.Exit(1)
+    if limit < 1:
+        console.print("[red]✗[/red] --limit must be >= 1")
+        raise typer.Exit(1)
+    if limit > 100:
+        console.print("[yellow]⚠[/yellow] --limit capped at 100")
+        limit = 100
+
+    # Echo effective weights so the table header documents
+    # what the user actually ran.
+    if mode == "bm25":
+        effective_bm25_weight = bm25_weight
+        effective_vector_weight = 0.0
+    elif mode == "vector":
+        effective_bm25_weight = 0.0
+        effective_vector_weight = vector_weight
+    else:
+        effective_bm25_weight = bm25_weight
+        effective_vector_weight = vector_weight
+
+    try:
+        results = retrieve_hybrid(
+            query,
+            mode=mode,
+            limit=limit,
+            source_types=source_type,
+            resource_id=resource_id,
+            include_text=include_text,
+            bm25_weight=effective_bm25_weight,
+            vector_weight=effective_vector_weight,
+            explain=explain,
+            index_dir=index_dir,
+        )
+    except FileNotFoundError as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise typer.Exit(1) from exc
+    except ValueError as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        # Sort keys is intentionally False: the dicts are
+        # constructed in stable order.
+        sys.stdout.write(
+            json.dumps(
+                [r.to_dict(verbose=explain) for r in results],
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        sys.stdout.write("\n")
+        return
+
+    console.print(
+        f'[bold]Query:[/bold] "{query}"  '
+        f'[dim]mode={mode} bm25_weight={effective_bm25_weight:g} '
+        f'vector_weight={effective_vector_weight:g}[/dim]'
+    )
+    if not results:
+        console.print("[dim]No results.[/dim]")
+        return
+    table = Table(box=box.SIMPLE, show_lines=False)
+    table.add_column("Rank", style="cyan", justify="right")
+    table.add_column("Score", style="green", justify="right")
+    table.add_column("Mode", style="magenta")
+    table.add_column("Chunk", style="white")
+    table.add_column("Resource", style="white")
+    table.add_column("Citation", style="white")
+    table.add_column("Boost", style="yellow", justify="right")
+    for r in results:
+        boost_str = "-" if r.component_scores.graph_boost == 0.0 else f"{r.component_scores.graph_boost:.4f}"
+        table.add_row(
+            str(r.rank),
+            f"{r.score:.4f}",
+            r.mode,
+            _truncate(r.chunk_id, 40),
+            _truncate(r.title or r.resource_id, 40),
+            _truncate(r.citation_label, 30),
+            boost_str,
+        )
+    console.print(table)
+    console.print(f"\n[dim]Showing {len(results)} result(s).[/dim]")
+
+
 @app.command("generate-flashcards")
 def generate_flashcards(
     provider: str = typer.Option("mock", "--provider", help="Provider for optional future generation"),

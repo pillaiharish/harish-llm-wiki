@@ -72,6 +72,8 @@ def _expected_routes(site_dir: Path) -> List[Tuple[str, Path]]:
         ("/search/vector", site_dir / "search" / "vector.md"),
         ("/public/search/vector_index.json", site_dir / "public" / "search" / "vector_index.json"),
         ("/public/search/vector_manifest.json", site_dir / "public" / "search" / "vector_manifest.json"),
+        # Prompt 30 additions
+        ("/search/retrieval", site_dir / "search" / "retrieval.md"),
     ]
 
 

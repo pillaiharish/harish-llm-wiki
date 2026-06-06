@@ -31,6 +31,7 @@ Harish LLM Wiki is a Python pipeline that:
 - **Chunk Index**: Deterministic, citation-aware chunk index for future search and retrieval
 - **BM25 Search**: Deterministic lexical search backend over the chunk index (no embeddings, no vector DB)
 - **Vector Search**: Deterministic local hashing TF-IDF vector search over the chunk index (no model embeddings, no FAISS / Chroma / LanceDB)
+- **Hybrid Retrieval Router**: Deterministic hybrid retrieval router over the BM25 and vector backends with a small bounded graph-lite metadata boost (no LLM, no model embeddings, no graph traversal)
 - **Search**: VitePress built-in search
 - **Static Site**: No backend required for reading
 

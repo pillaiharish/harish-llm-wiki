@@ -1033,6 +1033,21 @@ class TestBM25Boundaries:
             encoding="utf-8",
         )
 
+        # Vector routes were added after Prompt 29 and are also checked
+        # by the shared static-route verification script.
+        (tmp_path / "search").joinpath("vector.md").write_text("# Vector\n", encoding="utf-8")
+        (tmp_path / "public" / "search").joinpath("vector_index.json").write_text(
+            json.dumps({"schema_version": "vector_index_v1", "vocab_summary": {}, "manifest": {}}),
+            encoding="utf-8",
+        )
+        (tmp_path / "public" / "search").joinpath("vector_manifest.json").write_text(
+            json.dumps({"schema_version": "vector_index_v1", "chunk_count": 0, "resource_count": 0}),
+            encoding="utf-8",
+        )
+
+        # Prompt 30: hybrid retrieval report page.
+        (tmp_path / "search").joinpath("retrieval.md").write_text("# Retrieval\n", encoding="utf-8")
+
         result_ok = subprocess.run(
             [sys.executable, str(script), "--site-dir", str(tmp_path)],
             capture_output=True,
