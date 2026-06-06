@@ -6,7 +6,7 @@ from collections import defaultdict
 from typing import Dict, List
 
 from wiki.config import config
-from wiki.generate.page_utils import extract_section, read_note
+from wiki.generate.page_utils import extract_section, md_table_cell, read_note, resource_route
 from wiki.resource_utils import TOPIC_DEFINITIONS, dedupe_records, display_title, learned_date, topic_matches
 from wiki.schemas import ResourceRecord
 from wiki.storage import Storage
@@ -115,7 +115,7 @@ class TagsGenerator:
 
         for tag in sorted(tags.keys()):
             count = len(tags[tag])
-            lines.append(f"| {tag} | {count} |")
+            lines.append(f"| {md_table_cell(tag)} | {count} |")
 
         lines.extend([""])
 
@@ -127,7 +127,7 @@ class TagsGenerator:
             ])
 
             for res in resources:
-                lines.append(f"- [{res['title']}](../resources/{res['id'].replace(':', '_')}.html) ({res['type']})")
+                lines.append(f"- [{md_table_cell(res['title'])}]({resource_route(res['id'])}) ({md_table_cell(res['type'])})")
 
             lines.append("")
 

@@ -5,6 +5,7 @@ from typing import Optional, List
 from datetime import datetime
 import hashlib
 import json
+import re
 import shutil
 import sys
 import tarfile
@@ -204,10 +205,38 @@ def _count_files(directory: Path, pattern: str = "*.md") -> int:
     return len(list(directory.glob(pattern)))
 
 
+def _timeline_counts(periods) -> tuple[int, int]:
+    """Return timeline period and entry counts from generated periods."""
+    if periods is None:
+        timeline_json = config.get_data_path("processed", "timeline", "timeline.json")
+        if not timeline_json.exists():
+            return 0, 0
+        try:
+            data = Storage.read_json(timeline_json)
+            loaded_periods = data.get("periods", [])
+            return len(loaded_periods), sum(len(period.get("entries", [])) for period in loaded_periods)
+        except Exception:
+            return 0, 0
+    return len(periods), sum(len(period.entries) for period in periods)
+
+
+def _resource_route_target_exists(local_page: str, site_dir: Path) -> bool:
+    """Return whether a generated route path has a matching Markdown page."""
+    if not local_page.startswith("/"):
+        return False
+    if local_page.endswith(".md"):
+        return False
+    rel = local_page.strip("/")
+    candidates = [site_dir / f"{rel}.md", site_dir / rel / "index.md"]
+    return any(path.exists() for path in candidates)
+
+
 def write_generation_manifest(records, *, concepts=None, tags=None, topics=None,
                                learn=None, gaps=None, review=None, revision=None,
-                               indexes=None) -> Path:
+                               indexes=None, timeline=None, graph=None) -> Path:
     """Write generated_manifest.json after all derived views finish."""
+    timeline_period_count, timeline_entry_count = _timeline_counts(timeline)
+    graph_stats = (graph or {}).get("stats", {}) if isinstance(graph, dict) else {}
     manifest = {
         "generated_at": datetime.utcnow().isoformat(),
         "resource_count": len(list(records)) if records else 0,
@@ -219,7 +248,10 @@ def write_generation_manifest(records, *, concepts=None, tags=None, topics=None,
         "revision_question_count": len(revision.get("questions", [])) if isinstance(revision, dict) and revision else 0,
         "search_index_items": len((indexes or {}).get("all", [])),
         "gaps_count": len(gaps.needs_verification) + len(gaps.weak_examples) + len(gaps.missing_project_connection) + len(gaps.resources_missing_metadata) if gaps else 0,
-        "timeline_periods": _count_files(config.get_data_path("processed", "timeline"), "*.json"),
+        "timeline_periods": timeline_period_count,
+        "timeline_entries": timeline_entry_count,
+        "graph_node_count": graph_stats.get("node_count", 0),
+        "graph_edge_count": graph_stats.get("edge_count", 0),
         "outputs": {
             "concepts": str(config.get_data_path("processed", "concepts")),
             "timeline": str(config.get_data_path("processed", "timeline", "timeline.md")),
@@ -232,12 +264,31 @@ def write_generation_manifest(records, *, concepts=None, tags=None, topics=None,
             "revision": str(config.get_data_path("processed", "revision")),
             "explorer": str(config.get_data_path("site_generated", "docs", "explorer", "index.md")),
             "sources": str(config.get_data_path("site_generated", "docs", "sources", "index.md")),
+            "graph": str(config.get_data_path("site_generated", "docs", "public", "graph")),
         },
     }
     manifest_path = config.get_data_path("processed", "generated_manifest.json")
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     Storage.write_json(manifest, manifest_path)
     return manifest_path
+
+
+def _build_knowledge_graph_for_manifest(records):
+    """Build and export the knowledge graph (Prompt 23).
+
+    Returns the in-memory graph dict, or ``{}`` if the build fails
+    (in which case a warning is logged but execution continues).
+    """
+    from wiki.graph import GraphBuilder
+    from wiki.graph.export import export_graph
+
+    try:
+        graph = GraphBuilder().build(records)
+        export_graph(graph)
+    except Exception as exc:  # pragma: no cover - defensive
+        console.print(f"  [yellow]⚠[/yellow] Knowledge graph build failed: {exc}")
+        return {}
+    return graph
 
 
 def generate_derived_views(records=None) -> dict:
@@ -253,11 +304,6 @@ def generate_derived_views(records=None) -> dict:
     concept_extractor.save()
     console.print("  [green]✓[/green] Concepts saved")
 
-    console.print("Generating timeline...")
-    periods = timeline_generator.generate(records)
-    timeline_generator.save(periods)
-    console.print("  [green]✓[/green] Timeline saved")
-
     console.print("Generating tags...")
     tags = tags_generator.generate(records)
     tags_generator.save(tags)
@@ -267,6 +313,11 @@ def generate_derived_views(records=None) -> dict:
     topics = topic_generator.generate(records)
     topic_generator.save(topics)
     console.print("  [green]✓[/green] Topics saved")
+
+    console.print("Generating timeline...")
+    periods = timeline_generator.generate(records)
+    timeline_generator.save(periods)
+    console.print("  [green]✓[/green] Timeline saved")
 
     console.print("Generating gaps report...")
     gaps = gaps_generator.generate(records)
@@ -293,10 +344,15 @@ def generate_derived_views(records=None) -> dict:
     revision_generator.save(revision)
     console.print("  [green]✓[/green] Revision pages saved")
 
+    console.print("Generating knowledge graph...")
+    graph_data = _build_knowledge_graph_for_manifest(records)
+    console.print("  [green]✓[/green] Knowledge graph saved")
+
     console.print("Writing generation manifest...")
     manifest_path = write_generation_manifest(
         records, concepts=concept_extractor.concepts, tags=tags, topics=topics,
         learn=learn, gaps=gaps, review=review, revision=revision, indexes=indexes,
+        timeline=periods, graph=graph_data,
     )
     console.print("  [green]✓[/green] Manifest saved")
 
@@ -306,6 +362,8 @@ def generate_derived_views(records=None) -> dict:
     console.print(f"  Gaps: {manifest['gaps_count']}")
     console.print(f"  Learn pages: {manifest['learn_page_count']}")
     console.print(f"  Search index items: {manifest['search_index_items']}")
+    console.print(f"  Graph nodes: {manifest.get('graph_node_count', 0)}")
+    console.print(f"  Graph edges: {manifest.get('graph_edge_count', 0)}")
 
     return manifest
 
@@ -1126,6 +1184,24 @@ def regenerate_views():
     console.print(f"\n[green]✓[/green] Derived views regenerated: {site_path}")
 
 
+@app.command("regenerate-derived")
+def regenerate_derived():
+    """Alias for regenerate-views."""
+    regenerate_views()
+
+
+@app.command("regenerate-revision")
+def regenerate_revision():
+    """Alias for generate-revision."""
+    generate_revision()
+
+
+@app.command("regenerate-notes")
+def regenerate_notes_alias():
+    """Alias for generate-notes."""
+    generate_notes()
+
+
 @app.command("generate-review-pages")
 def generate_review_pages():
     """Generate static review dashboard pages without LLM calls."""
@@ -1259,6 +1335,7 @@ def smoke_site():
         ("Timeline page", site_dir / "timeline.md"),
         ("Gaps page", site_dir / "gaps.md"),
         ("Home page", site_dir / "index.md"),
+        ("Graph viewer", site_dir / "graph" / "viewer.md"),
     ]
 
     for label, path in expected_pages:
@@ -1297,6 +1374,13 @@ def smoke_site():
             items = data.get("items", [])
             if not items:
                 warnings.append((label, f"Empty items array in {path}"))
+            if label == "Search all.json":
+                for item in items[:50]:
+                    local_page = item.get("local_page", "")
+                    if local_page.endswith(".md"):
+                        errors.append(("Search index", f"local_page ends with .md: {local_page[:100]}"))
+                    if local_page.startswith("/resources/") and not _resource_route_target_exists(local_page, site_dir):
+                        errors.append(("Search index", f"local_page target missing: {local_page}"))
         except json.JSONDecodeError as exc:
             errors.append((label, f"Invalid JSON in {path}: {exc}"))
 
@@ -1305,10 +1389,31 @@ def smoke_site():
         explorer_content = explorer_path.read_text(encoding="utf-8")
         if "wiki-explorer" not in explorer_content:
             errors.append(("Explorer page", "Missing #wiki-explorer div"))
-        if "Static table fallback" not in explorer_content:
-            errors.append(("Explorer page", "Missing Static table fallback section"))
-        if "try {" not in explorer_content and "try{" not in explorer_content:
-            warnings.append(("Explorer page", "Missing JS error handling (try/catch)"))
+        if "## Resource summary" not in explorer_content:
+            errors.append(("Explorer page", "Missing Resource summary section"))
+        if "## Recent resources" not in explorer_content:
+            errors.append(("Explorer page", "Missing Recent resources section"))
+        if "const items = [" in explorer_content:
+            errors.append(("Explorer page", "Contains inline 'const items = [...]' — should use fetch() instead"))
+        if "search/all.json" not in explorer_content:
+            errors.append(("Explorer page", "Does not reference search/all.json for data loading"))
+        static_rows = explorer_content.count("| [")
+        if static_rows < 1 and "| No items" not in explorer_content:
+            warnings.append(("Explorer page", "Static fallback table has no resource rows"))
+        if "Could not load search index. Check /search/all.json." not in explorer_content:
+            warnings.append(("Explorer page", "Missing fetch error fallback message"))
+
+    # Check resources/index.md for broken links
+    resources_index = site_dir / "resources" / "index.md"
+    if resources_index.exists():
+        ri_content = resources_index.read_text(encoding="utf-8")
+        if ".md)" in ri_content:
+            errors.append(("Resources index", "Contains .md) resource links — should use route paths"))
+        for line in ri_content.splitlines():
+            if line.startswith("|"):
+                unescaped_pipes = len(re.findall(r'(?<!\\)\|', line))
+                if unescaped_pipes > 6:
+                    errors.append(("Resources index", f"Broken table row (too many pipes?): {line[:120]}"))
 
     for label, rel in [
         ("Repo Explorer", Path("explorer") / "index.md"),
@@ -1317,6 +1422,38 @@ def smoke_site():
         path = repo_dir / rel
         if not path.exists():
             warnings.append((label, f"Not synced to repo site: {path}"))
+
+    # Check for duplicate topic display names
+    topics_index = site_dir / "topics" / "index.md"
+    if topics_index.exists():
+        try:
+            topics_content = topics_index.read_text(encoding="utf-8")
+            import re as _re
+            topic_names = _re.findall(r"- \[(.+?)\]", topics_content)
+            seen_names: dict[str, str] = {}
+            for name in topic_names:
+                if name in seen_names:
+                    errors.append(("Topic Map", f"Duplicate topic display name: '{name}' appears more than once"))
+                else:
+                    seen_names[name] = name
+        except Exception as exc:
+            warnings.append(("Topic Map", f"Could not check for duplicate topics: {exc}"))
+
+    # Check for alias topic slugs in search index
+    all_json_path = site_dir / "public" / "search" / "all.json"
+    if all_json_path.exists():
+        try:
+            all_data = json.loads(all_json_path.read_text(encoding="utf-8"))
+            from wiki.resource_utils import TOPIC_ALIASES
+            alias_slugs = set(TOPIC_ALIASES.keys())
+            for item in all_data.get("items", [])[:100]:
+                item_id = item.get("id", "")
+                if item_id.startswith("topic:"):
+                    slug = item_id.replace("topic:", "")
+                    if slug in alias_slugs:
+                        errors.append(("Search index", f"Alias topic slug '{slug}' found in all.json — should be canonical only"))
+        except Exception:
+            pass
 
     # Check generation manifest
     manifest_path = config.get_data_path("processed", "generated_manifest.json")
@@ -1331,6 +1468,64 @@ def smoke_site():
                 warnings.append(("Generation manifest", "Manifest reports 0 resources."))
         except json.JSONDecodeError:
             errors.append(("Generation manifest", f"Invalid JSON: {manifest_path}"))
+
+    # Check the knowledge graph (Prompt 23).
+    graph_dir = site_dir / "public" / "graph"
+    expected_graph = [
+        ("Knowledge graph nodes.json", graph_dir / "nodes.json"),
+        ("Knowledge graph edges.json", graph_dir / "edges.json"),
+        ("Knowledge graph knowledge_graph.json", graph_dir / "knowledge_graph.json"),
+    ]
+    for label, path in expected_graph:
+        if not path.exists():
+            warnings.append((label, f"Missing: {path}"))
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            errors.append((label, f"Invalid JSON in {path}: {exc}"))
+            continue
+        if label == "Knowledge graph knowledge_graph.json":
+            for required in ("schema_version", "nodes", "edges", "stats"):
+                if required not in data:
+                    errors.append((label, f"Missing key '{required}' in {path}"))
+    # Run the graph validator on the on-disk files
+    if (graph_dir / "nodes.json").exists() and (graph_dir / "edges.json").exists():
+        try:
+            from wiki.graph import iter_issues_from_files
+            graph_issues = iter_issues_from_files(
+                graph_dir / "nodes.json",
+                graph_dir / "edges.json",
+                knowledge_graph_path=graph_dir / "knowledge_graph.json",
+            )
+        except Exception as exc:
+            warnings.append(("Knowledge graph", f"Validator load failed: {exc}"))
+        else:
+            for severity, code, message in graph_issues:
+                if severity == "error":
+                    errors.append(("Knowledge graph", f"{code}: {message}"))
+                else:
+                    warnings.append(("Knowledge graph", f"{code}: {message}"))
+
+    # Prompt 25: check the graph viewer page contents.
+    viewer_path = site_dir / "graph" / "viewer.md"
+    if viewer_path.exists():
+        try:
+            viewer_content = viewer_path.read_text(encoding="utf-8")
+        except Exception as exc:
+            warnings.append(("Graph viewer", f"Read error: {exc}"))
+        else:
+            required_viewer_strings = (
+                "public/graph/knowledge_graph.json",
+                '<div id="graph-viewer">',
+                'id="graph-search"',
+                'id="graph-node-list"',
+            )
+            for needle in required_viewer_strings:
+                if needle not in viewer_content:
+                    warnings.append(
+                        ("Graph viewer", f"Missing required marker: {needle!r}")
+                    )
 
     if errors:
         console.print(f"[red]Smoke test found {len(errors)} error(s) and {len(warnings)} warning(s):[/red]\n")
@@ -1391,6 +1586,7 @@ def validate(
         ("Tags page", site_builder.repo_site_dir / "tags" / "index.md"),
         ("Timeline page", site_builder.repo_site_dir / "timeline.md"),
         ("Gaps page", site_builder.repo_site_dir / "gaps.md"),
+        ("graph viewer", site_builder.repo_site_dir / "graph" / "viewer.md"),
     ]
     for label, path in expected_site_files:
         if not path.exists():
@@ -1418,6 +1614,38 @@ def validate(
         except Exception as exc:
             issues.append(("warning", f"{label} read error: {exc}"))
 
+    # Check for duplicate topic display names
+    topics_index = site_builder.repo_site_dir / "topics" / "index.md"
+    if topics_index.exists():
+        try:
+            topics_content = topics_index.read_text(encoding="utf-8")
+            import re as _re
+            topic_names = _re.findall(r"- \[(.+?)\]", topics_content)
+            seen_names: dict[str, str] = {}
+            for name in topic_names:
+                if name in seen_names:
+                    issues.append(("error", f"Duplicate topic display name: '{name}' appears more than once in Topic Map"))
+                else:
+                    seen_names[name] = name
+        except Exception as exc:
+            issues.append(("warning", f"Could not check for duplicate topics: {exc}"))
+
+    # Check for alias topic slugs in search index
+    all_json_alias_path = site_builder.repo_site_dir / "public" / "search" / "all.json"
+    if all_json_alias_path.exists():
+        try:
+            all_data = json.loads(all_json_alias_path.read_text(encoding="utf-8"))
+            from wiki.resource_utils import TOPIC_ALIASES
+            alias_slugs = set(TOPIC_ALIASES.keys())
+            for item in all_data.get("items", [])[:100]:
+                item_id = item.get("id", "")
+                if item_id.startswith("topic:"):
+                    slug = item_id.replace("topic:", "")
+                    if slug in alias_slugs:
+                        issues.append(("error", f"Alias topic slug '{slug}' found in all.json — should be canonical only"))
+        except json.JSONDecodeError as exc:
+            issues.append(("warning", f"all.json has invalid JSON: {exc}"))
+
     # Check generation manifest staleness
     manifest_path = config.get_data_path("processed", "generated_manifest.json")
     if not manifest_path.exists():
@@ -1435,6 +1663,56 @@ def validate(
                         break
         except Exception:
             issues.append(("warning", "Invalid generated_manifest.json"))
+
+    # Validate generated site pages for broken tables and .md links
+    resources_index = site_builder.repo_site_dir / "resources" / "index.md"
+    if resources_index.exists():
+        try:
+            ri_content = resources_index.read_text(encoding="utf-8")
+            if ".md)" in ri_content:
+                issues.append(("error", "Resources index contains .md) resource links — should use route paths"))
+            for line_num, line in enumerate(ri_content.splitlines(), start=1):
+                if line.startswith("|"):
+                    unescaped_pipes = len(re.findall(r'(?<!\\)\|', line))
+                    if unescaped_pipes > 6:
+                        issues.append(("warning", f"Resources index line {line_num}: table row has too many unescaped pipes ({unescaped_pipes} cells)"))
+        except Exception as exc:
+            issues.append(("warning", f"Resources index read error: {exc}"))
+
+    explorer_page = site_builder.repo_site_dir / "explorer" / "index.md"
+    if explorer_page.exists():
+        try:
+            ex_content = explorer_page.read_text(encoding="utf-8")
+            if "const items = [" in ex_content:
+                issues.append(("error", "Explorer contains inline 'const items = [...]' — should use fetch() instead"))
+            if "search/all.json" not in ex_content:
+                issues.append(("warning", "Explorer does not reference search/all.json for data loading"))
+            if "## Resource summary" not in ex_content:
+                issues.append(("warning", "Explorer missing Resource summary section"))
+            if "## Recent resources" not in ex_content:
+                issues.append(("warning", "Explorer missing Recent resources section"))
+            if "Could not load search index. Check /search/all.json." not in ex_content:
+                issues.append(("warning", "Explorer missing exact search-index error fallback"))
+        except Exception as exc:
+            issues.append(("warning", f"Explorer page read error: {exc}"))
+
+    all_json_path = site_builder.repo_site_dir / "public" / "search" / "all.json"
+    if all_json_path.exists():
+        try:
+            all_data = json.loads(all_json_path.read_text(encoding="utf-8"))
+            all_items = all_data.get("items", [])
+            if not all_items:
+                issues.append(("warning", "all.json has empty items array"))
+            for item in all_items[:20]:
+                local_page = item.get("local_page", "")
+                if local_page.endswith(".md"):
+                    issues.append(("error", f"all.json local_page ends with .md: {local_page[:80]}"))
+                if local_page.startswith("/resources/") and not _resource_route_target_exists(local_page, site_builder.repo_site_dir):
+                    issues.append(("error", f"all.json local_page target missing: {local_page}"))
+        except json.JSONDecodeError as exc:
+            issues.append(("warning", f"all.json has invalid JSON: {exc}"))
+    else:
+        issues.append(("warning", "Missing all.json — run build-site --refresh"))
 
     for record in records:
         if provider:
@@ -1474,6 +1752,42 @@ def validate(
             debug_dir = config.get_data_path("debug", "failed_notes", record.id)
             if debug_dir.exists() and any(debug_dir.iterdir()):
                 issues.append(("warning", f"{record.id}: debug failed_notes directory exists"))
+
+    # Check the knowledge graph (Prompt 23)
+    graph_dir = site_builder.repo_site_dir / "public" / "graph"
+    nodes_path = graph_dir / "nodes.json"
+    edges_path = graph_dir / "edges.json"
+    knowledge_graph_path = graph_dir / "knowledge_graph.json"
+    if not nodes_path.exists():
+        issues.append(("warning", f"Missing knowledge graph: {nodes_path}. Run build-site --refresh."))
+    if not edges_path.exists():
+        issues.append(("warning", f"Missing knowledge graph: {edges_path}. Run build-site --refresh."))
+    if nodes_path.exists() or edges_path.exists():
+        try:
+            from wiki.graph import iter_issues_from_files
+            graph_issues = iter_issues_from_files(
+                nodes_path, edges_path, knowledge_graph_path=knowledge_graph_path
+            )
+        except Exception as exc:
+            issues.append(("warning", f"Could not load graph validator: {exc}"))
+        else:
+            for severity, code, message in graph_issues:
+                issues.append((severity, f"graph: {code}: {message}"))
+
+    # Prompt 25: check the graph viewer page contents.
+    viewer_repo_path = site_builder.repo_site_dir / "graph" / "viewer.md"
+    if viewer_repo_path.exists():
+        try:
+            viewer_content = viewer_repo_path.read_text(encoding="utf-8")
+            if "public/graph/knowledge_graph.json" not in viewer_content:
+                issues.append(
+                    (
+                        "warning",
+                        "Graph viewer does not reference /public/graph/knowledge_graph.json",
+                    )
+                )
+        except Exception as exc:
+            issues.append(("warning", f"Graph viewer read error: {exc}"))
 
     # Print results
     if issues:

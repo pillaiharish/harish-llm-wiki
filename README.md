@@ -235,6 +235,9 @@ python -m wiki build-site
 # Regenerate timeline, topics, tags, concepts, gaps, and site docs without LLM calls
 python -m wiki regenerate-views
 
+# Alias: regenerate-derived (same as regenerate-views)
+python -m wiki regenerate-derived
+
 # Refresh derived views before building the VitePress mirror
 python -m wiki build-site --refresh
 
@@ -244,6 +247,9 @@ python -m wiki test-llm --provider ollama_cloud
 
 # Validate configuration and content
 python -m wiki validate
+
+# Smoke-test the built static site
+python -m wiki smoke-site
 
 # Full pipeline: process + build + validate
 python -m wiki full-run
@@ -540,6 +546,76 @@ python -m wiki build-site --refresh
 ```
 
 The `import-transcript` command prints the `transcript:<hash>` resource ID. Imported transcripts do not require Whisper or ffmpeg.
+
+## Daily Workflow
+
+```bash
+python -m wiki add-resource --url "https://example.com/article"
+python -m wiki daily --provider ollama_cloud --yes
+cd site && npm run docs:dev
+```
+
+Safe defaults:
+
+```bash
+python -m wiki daily --provider mock --limit 1
+python -m wiki daily --skip-llm
+```
+
+## Review, Search, Revision, Learn
+
+`build-site --refresh` regenerates the full static wiki surface: resource pages, topics, Learn chapters, review dashboard, search indexes, Explorer, Sources, revision questions, flashcards, tags, timeline, concepts, and gaps.
+
+You can also run these pieces directly:
+
+```bash
+python -m wiki generate-review-pages
+python -m wiki generate-search-index
+python -m wiki generate-revision
+python -m wiki export-flashcards --format json
+python -m wiki export-flashcards --format csv
+```
+
+### CLI Command Aliases
+
+| Alias | Canonical Command |
+|---|---|
+| `regenerate-derived` | `regenerate-views` |
+| `regenerate-revision` | `generate-revision` |
+| `regenerate-notes` | `generate-notes` |
+
+## Doctor
+
+```bash
+python -m wiki doctor
+python -m wiki doctor --check-asr
+python -m wiki doctor --check-llm
+```
+
+## Status Report
+
+```bash
+python -m wiki status-report
+```
+
+Reports are written under `~/llm-wiki-data/reports/`.
+
+## Backup
+
+```bash
+python -m wiki backup
+python -m wiki backup --include-debug
+python -m wiki backup --include-media
+```
+
+Backups include the external wiki data folder, not the Git repo.
+
+## Restore
+
+```bash
+python -m wiki restore --file backup.tar.gz --target-dir ~/llm-wiki-data-restored
+python -m wiki restore --file backup.tar.gz --target-dir ~/llm-wiki-data-restored --yes
+```
 
 ## Makefile Commands
 

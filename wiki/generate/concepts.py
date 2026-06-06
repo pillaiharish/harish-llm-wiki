@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from wiki.config import config
+from wiki.generate.page_utils import resource_route
 from wiki.resource_utils import display_title
 from wiki.schemas import Concept, ConceptResourceRef, ResourceRecord
 from wiki.storage import Storage
@@ -233,7 +234,7 @@ class ConceptExtractor:
         ]
         
         for ref in concept.resources:
-            lines.append(f"- [{ref.resource_title}](../resources/{ref.resource_id.replace(':', '_')})")
+            lines.append(f"- [{ref.resource_title}]({resource_route(ref.resource_id)})")
         
         if concept.revision_questions:
             lines.extend([

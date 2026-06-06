@@ -276,6 +276,9 @@ class TestGenerationManifest:
         assert manifest_path.exists()
         assert manifest["generated_at"]
         assert manifest["resource_count"] >= 1
+        assert manifest["timeline_periods"] >= 1
+        assert manifest["timeline_entries"] >= 1
+        assert manifest["search_index_items"] >= 1
 
     def test_manifest_counts_tags_and_gaps(self, tmp_path, monkeypatch):
         monkeypatch.setattr(config, "LLM_WIKI_DATA_DIR", tmp_path)
@@ -289,6 +292,13 @@ class TestGenerationManifest:
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
         assert data["tag_count"] >= 1
         assert "gaps_count" in data
+        assert "timeline_entries" in data
+
+    def test_tags_include_topic_fallback_from_title(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(config, "LLM_WIKI_DATA_DIR", tmp_path)
+        record = _record(tmp_path, tags=[])
+        tags = tags_generator.generate([record])
+        assert "rag-retrieval" in tags
 
 
 class TestConceptsCleanup:

@@ -155,7 +155,8 @@ class TestExplorerFallback:
             }
         ]
         html = search_index_generator._explorer(items)
-        assert "## Static table fallback" in html
+        assert "## Resource summary" in html
+        assert "## Recent resources" in html
         assert "| Title | Type | Topic | Provider | Review | Stale |" in html
         assert "Test Resource" in html
 
@@ -168,8 +169,14 @@ class TestExplorerFallback:
     def test_explorer_has_js_error_catch(self):
         items = []
         html = search_index_generator._explorer(items)
-        assert "try {" in html or "try{" in html
-        assert "Could not initialize Explorer" in html
+        assert "initExplorer" in html
+        assert "Could not load search index. Check /search/all.json." in html
+
+    def test_explorer_uses_search_all_json_fetch_path(self):
+        html = search_index_generator._explorer([])
+        assert "search/all.json" in html
+        assert "public/search" not in html
+        assert "const items =" not in html
 
     def test_explorer_empty_items_has_no_items_row(self):
         items = []

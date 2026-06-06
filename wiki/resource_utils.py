@@ -14,21 +14,42 @@ from wiki.storage import Storage
 REPLACEABLE_TITLES = {"", "untitled", "unknown resource"}
 
 
+TOPIC_ALIASES: dict[str, str] = {
+    "rag": "rag-retrieval",
+    "retrieval": "rag-retrieval",
+    "security": "ai-security",
+    "ai-safety": "ai-security",
+    "optimization-training": "optimizer-training",
+    "training": "optimizer-training",
+}
+
 TOPIC_DEFINITIONS: dict[str, dict[str, Any]] = {
-    "rag": {
+    "rag-retrieval": {
         "name": "RAG / Retrieval",
-        "keywords": ["rag", "retrieval", "embedding", "embeddings", "vector", "hybrid search", "cag", "bm25"],
+        "keywords": [
+            "rag", "retrieval", "hybrid search", "bm25", "dense retrieval",
+            "sparse retrieval", "cag", "chunking", "vector database",
+            "embedding", "embeddings", "vector",
+        ],
         "learning_path": [
-            "Start with the basic RAG mental model.",
-            "Then understand embeddings and chunking.",
+            "Start with the basic retrieval mental model.",
+            "Study chunking and embedding choices.",
             "Compare sparse, dense, and hybrid retrieval.",
-            "Study retrieval improvement and reranking.",
-            "Finish with RAG vs CAG and system tradeoffs.",
+            "Apply retrieval to a project and evaluate failure modes.",
+        ],
+    },
+    "embeddings": {
+        "name": "Embeddings",
+        "keywords": ["embedding", "embeddings", "semantic search", "vector search", "sentence transformer", "hugging face embeddings"],
+        "learning_path": [
+            "Start with vectors as meaning-carrying representations.",
+            "Study similarity search and distance metrics.",
+            "Connect embedding quality to retrieval quality.",
         ],
     },
     "llm-inference": {
         "name": "LLM Inference / Serving",
-        "keywords": ["vllm", "inference", "serving", "paged attention", "batching", "prefix caching", "gpu"],
+        "keywords": ["vllm", "inference", "serving", "openai-compatible api", "throughput", "latency", "batching", "paged attention", "prefix caching", "gpu"],
         "learning_path": [
             "Start with what happens during inference.",
             "Then study serving engines and batching.",
@@ -36,9 +57,18 @@ TOPIC_DEFINITIONS: dict[str, dict[str, Any]] = {
             "Finish with scaling and production serving layers.",
         ],
     },
+    "vllm": {
+        "name": "vLLM",
+        "keywords": ["vllm", "paged attention", "continuous batching", "prefix caching"],
+        "learning_path": [
+            "Start with the serving problem vLLM solves.",
+            "Study PagedAttention and scheduler behavior.",
+            "Connect engine internals to throughput and latency.",
+        ],
+    },
     "llm-evals": {
         "name": "LLM Evaluation",
-        "keywords": ["eval", "evals", "evaluation", "benchmark", "judge", "rubric"],
+        "keywords": ["eval", "evals", "evaluation", "benchmark", "judge", "rubric", "lm-eval", "guidellm"],
         "learning_path": [
             "Start with what an eval measures.",
             "Then compare qualitative and automated evals.",
@@ -48,12 +78,21 @@ TOPIC_DEFINITIONS: dict[str, dict[str, Any]] = {
     },
     "agents": {
         "name": "Agents / Tooling",
-        "keywords": ["agent", "agents", "tool", "tooling", "harness", "connector"],
+        "keywords": ["agent", "agents", "tool", "tooling", "agent harness", "harness", "connector"],
         "learning_path": [
             "Start with tool-calling basics.",
             "Then understand agent loops and harnesses.",
             "Study reliability and observability.",
             "Finish with security and connector risks.",
+        ],
+    },
+    "ai-security": {
+        "name": "AI Security",
+        "keywords": ["security", "attack", "exfiltration", "prompt injection", "jailbreak", "connector"],
+        "learning_path": [
+            "Start with the AI threat model.",
+            "Study prompt injection and data exfiltration paths.",
+            "Finish with connector and review mitigations.",
         ],
     },
     "optimizer-training": {
@@ -65,16 +104,38 @@ TOPIC_DEFINITIONS: dict[str, dict[str, Any]] = {
             "Connect training dynamics to model behavior.",
         ],
     },
-    "security": {
-        "name": "Security",
-        "keywords": ["security", "attack", "exfiltration", "prompt injection", "jailbreak", "connector"],
+    "linear-algebra": {
+        "name": "Linear Algebra",
+        "keywords": ["linear algebra", "matrix", "matrices", "vectors", "mit 18.06"],
         "learning_path": [
-            "Start with the threat model.",
-            "Then study concrete attack paths.",
-            "Finish with mitigations and review checklists.",
+            "Start with vectors and matrices.",
+            "Study transformations and similarity.",
+            "Connect linear algebra to embeddings and optimization.",
+        ],
+    },
+    "transcription-asr": {
+        "name": "Local Audio/Video Transcription",
+        "keywords": ["transcript", "whisper", "audio", "video", "asr", "speech"],
+        "learning_path": [
+            "Start with audio extraction.",
+            "Study ASR model choices and transcript chunking.",
+            "Connect transcript chunks to cited wiki notes.",
         ],
     },
 }
+
+LEARN_DEFINITION_SLUGS = [
+    "rag-retrieval",
+    "embeddings",
+    "llm-inference",
+    "vllm",
+    "llm-evals",
+    "agents",
+    "ai-security",
+    "optimizer-training",
+    "linear-algebra",
+    "transcription-asr",
+]
 
 
 def is_replaceable_title(value: str | None) -> bool:
@@ -204,6 +265,29 @@ def short_citation_label(chunk_id: str) -> str:
     return chunk_id
 
 
+def normalize_topic_slug(slug: str) -> str:
+    """Map an alias topic slug to its canonical slug.
+
+    If the slug is already canonical, it is returned unchanged.
+    """
+    return TOPIC_ALIASES.get(slug, slug)
+
+
+def normalize_topic_list(topics: list[str]) -> list[str]:
+    """Normalize a list of topic slugs to canonical slugs, deduping in order.
+
+    Only returns slugs that exist in TOPIC_DEFINITIONS (i.e., are canonical).
+    """
+    seen: set[str] = set()
+    result: list[str] = []
+    for slug in topics:
+        canonical = normalize_topic_slug(slug)
+        if canonical not in seen and canonical in TOPIC_DEFINITIONS:
+            seen.add(canonical)
+            result.append(canonical)
+    return result
+
+
 def _contains_keyword(text: str, keyword: str) -> bool:
     """Return True for whole-word keyword or literal phrase matches."""
     if " " in keyword:
@@ -221,7 +305,10 @@ def _matching_topics(text: str) -> list[str]:
 
 
 def topic_matches(record: ResourceRecord, note_text: str = "") -> list[str]:
-    """Assign deterministic topics from title, tags, metadata, and note text."""
+    """Assign deterministic canonical topics from title, tags, metadata, and note text.
+
+    Returns only canonical slugs (aliases are normalized and deduped).
+    """
     primary_text = " ".join(
         [
             display_title(record),
@@ -242,4 +329,4 @@ def topic_matches(record: ResourceRecord, note_text: str = "") -> list[str]:
     if not assigned and note_sample and "mock-generated" not in note_sample and "placeholder content" not in note_sample:
         assigned = _matching_topics(note_sample)
 
-    return assigned
+    return normalize_topic_list(assigned)

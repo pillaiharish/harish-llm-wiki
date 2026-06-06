@@ -22,6 +22,7 @@ from wiki.generate.citations import (
     strip_source_chunks_section,
 )
 from wiki.generate.learning_links import resolve_learning_links
+from wiki.generate.page_utils import concept_route, md_table_cell, resource_route
 
 
 class SiteBuilder:
@@ -60,10 +61,25 @@ class SiteBuilder:
 
         # Build topics section
         self._build_topics()
-        
+
+        # Build generated higher-level sections
+        self._copy_generated_section("learn")
+        self._copy_generated_section("review")
+        self._copy_generated_section("revision")
+        self._copy_generated_section("explorer")
+        self._copy_generated_section("sources")
+
+        # Build the knowledge graph (Prompt 23).
+        # The JSON files are written into
+        # ``self.data_site_dir / public / graph`` and will be picked up
+        # by the ``public`` copy step below.
+        self._build_knowledge_graph(records)
+
+        self._copy_generated_section("public")
+
         # Build gaps page
         self._build_gaps()
-        
+
         # Sync to repo site directory
         self._sync_to_repo_site()
         
@@ -153,11 +169,11 @@ Do not publish publicly unless content is appropriate for public sharing.
             status = record.status.value
             date = learned_date(record).strftime("%Y-%m-%d")
             
-            # Create individual resource page if note exists
+            # Create individual resource page. Resources without generated notes
+            # still need a route target for Explorer/Sources/search indexes.
+            resource_filename = resource_page_name(record.id)
+            resource_path = resources_dir / resource_filename
             if record.generated_note_path and record.generated_note_path.exists():
-                resource_filename = resource_page_name(record.id)
-                resource_path = resources_dir / resource_filename
-                
                 # Copy note content with site-build-time post-processing
                 note_content = Storage.read_text(record.generated_note_path)
                 
@@ -181,12 +197,18 @@ Do not publish publicly unless content is appropriate for public sharing.
                     + self._strip_duplicate_title(note_content),
                     resource_path,
                 )
-                
-                link = f"[{title}](./{resource_filename})"
             else:
-                link = title
+                Storage.write_text(
+                    self._format_resource_header(record)
+                    + "\n\n"
+                    + "## Generated note\n\n"
+                    + "_No generated note is available for this resource yet._\n",
+                    resource_path,
+                )
+
+            link = f"[{md_table_cell(title)}]({resource_route(record.id)})"
             
-            index_lines.append(f"| {link} | {record.source_type.value} | {status} | {date} |")
+            index_lines.append(f"| {link} | {md_table_cell(record.source_type.value)} | {md_table_cell(status)} | {date} |")
         
         index_lines.append("")
         index_content = "\n".join(index_lines)
@@ -230,7 +252,7 @@ Do not publish publicly unless content is appropriate for public sharing.
         if concepts_source.exists():
             for concept_file in sorted(concepts_source.glob("*.md")):
                 name = concept_file.stem.replace("-", " ").title()
-                index_lines.append(f"- [{name}](./{concept_file.name})")
+                index_lines.append(f"- [{name}]({concept_route(concept_file.stem)})")
         else:
             index_lines.append("_No concepts generated yet._")
         
@@ -259,6 +281,8 @@ Do not publish publicly unless content is appropriate for public sharing.
         """Build the topics section."""
         topics_dir = self.data_site_dir / "topics"
         topics_dir.mkdir(exist_ok=True)
+        for old_file in list(topics_dir.glob("*.md")):
+            old_file.unlink()
         topics_source = config.get_data_path("processed", "topics")
         if topics_source.exists():
             for topic_file in topics_source.glob("*.md"):
@@ -277,6 +301,293 @@ Do not publish publicly unless content is appropriate for public sharing.
         
         gaps_path = self.data_site_dir / "gaps.md"
         Storage.write_text(content, gaps_path)
+
+    def _build_knowledge_graph(self, records: List[ResourceRecord]) -> None:
+        """Build the knowledge graph JSON files and Markdown index.
+
+        Prompt 23 introduces the graph data model and JSON export. The
+        files are written into ``self.data_site_dir / public / graph``
+        so the existing ``_copy_generated_section("public")`` pass
+        syncs them into the VitePress site automatically.
+        """
+        from wiki.graph import GraphBuilder, export_graph
+        from wiki.graph.export import graph_output_paths
+
+        try:
+            data_dir = config.LLM_WIKI_DATA_DIR
+            graph = GraphBuilder(data_dir=data_dir).build(records)
+            export_graph(graph, data_dir=data_dir)
+        except Exception as exc:  # pragma: no cover - defensive
+            print(f"  [yellow]⚠[/yellow] Knowledge graph build failed: {exc}")
+            return
+
+        paths = graph_output_paths(data_dir=data_dir)
+        if paths["knowledge_graph"].exists():
+            print(f"  [green]✓[/green] Knowledge graph: {paths['directory']}")
+            self._build_graph_index_page(graph)
+            # Prompt 25: also write the static graph viewer page.
+            self._build_graph_viewer_page(graph)
+
+    def _build_graph_index_page(self, graph: dict) -> None:
+        """Build a small Markdown landing page for the graph files.
+
+        The page is only generated if there is at least one node, so
+        an empty wiki does not surface a useless landing page.
+        """
+        stats = graph.get("stats", {})
+        node_type_counts = stats.get("node_type_counts", {}) or {}
+        edge_type_counts = stats.get("edge_type_counts", {}) or {}
+        lines = [
+            "# Knowledge Graph",
+            "",
+            "The wiki exposes a deterministic knowledge graph as JSON for future",
+            "RAG, search, and visualization features.",
+            "",
+            "| File | Purpose |",
+            "|---|---|",
+            "| [/public/graph/nodes.json](/public/graph/nodes.json) | All graph nodes |",
+            "| [/public/graph/edges.json](/public/graph/edges.json) | All graph edges |",
+            "| [/public/graph/knowledge_graph.json](/public/graph/knowledge_graph.json) | Combined bundle with stats |",
+            "| [Open the graph viewer](/graph/viewer) | Interactive neighborhood + filter explorer (Prompt 25) |",
+            "",
+            "## Stats",
+            "",
+            f"- Schema version: `{graph.get('schema_version', 'unknown')}`",
+            f"- Nodes: {stats.get('node_count', 0)}",
+            f"- Edges: {stats.get('edge_count', 0)}",
+            "",
+            "### Node types",
+            "",
+            "| Type | Count |",
+            "|---|---:|",
+        ]
+        for node_type, count in sorted(node_type_counts.items()):
+            lines.append(f"| {node_type} | {count} |")
+        lines.extend(["", "### Edge types", "", "| Type | Count |", "|---|---:|"])
+        for edge_type, count in sorted(edge_type_counts.items()):
+            lines.append(f"| {edge_type} | {count} |")
+        lines.extend([
+            "",
+            "## Provenance",
+            "",
+            f"- Generated: {graph.get('generated_at', '')}",
+            "",
+        ])
+        graph_dir = self.data_site_dir / "graph"
+        graph_dir.mkdir(parents=True, exist_ok=True)
+        Storage.write_text("\n".join(lines), graph_dir / "index.md")
+        # Prompt 24: also write the resource-relationships report page
+        # (only if at least one relationship edge was detected).
+        self._build_resource_relationships_page(graph, graph_dir)
+
+    def _build_resource_relationships_page(
+        self, graph: dict, graph_dir: Path
+    ) -> None:
+        """Write a Markdown report of detected resource relationships.
+
+        Prompt 24 introduces six new resource-to-resource edge types.
+        This page surfaces the top relationships for each type in a
+        compact table, sourced directly from the graph bundle. It is
+        only generated if at least one of the six edge types has a
+        non-zero count in ``stats.edge_type_counts``.
+
+        The page is generated from the same in-memory graph as the
+        JSON files (no second build pass), so it is byte-stable for a
+        given input.
+        """
+        from wiki.graph.schema import RESOURCE_RELATIONSHIP_EDGE_TYPES
+
+        stats = graph.get("stats", {}) or {}
+        edge_type_counts = stats.get("edge_type_counts", {}) or {}
+        rel_counts = {
+            et: edge_type_counts.get(et, 0)
+            for et in sorted(RESOURCE_RELATIONSHIP_EDGE_TYPES)
+        }
+        if sum(rel_counts.values()) == 0:
+            # No relationship edges to report; skip the page.
+            return
+
+        nodes = graph.get("nodes", []) or []
+        edges = graph.get("edges", []) or []
+        # Build a label lookup so the table can show the resource
+        # title rather than the bare id.
+        labels_by_id = {
+            n.get("id"): n.get("label", n.get("id", ""))
+            for n in nodes
+            if n.get("id")
+        }
+
+        lines: list[str] = [
+            "# Resource Relationships",
+            "",
+            "Deterministic resource-to-resource relationships detected at graph build",
+            "time (Prompt 24). Each row corresponds to a single edge in the",
+            "knowledge graph. Scores and reason lists come from the edge metadata.",
+            "",
+            "## Edge type summary",
+            "",
+            "| Edge type | Count |",
+            "|---|---:|",
+        ]
+        for edge_type, count in rel_counts.items():
+            lines.append(f"| {edge_type} | {count} |")
+
+        # Friendly description per edge type.
+        descriptions = {
+            "resource_similar_to_resource": (
+                "Catch-all similarity edge. Emitted when a pair's combined "
+                "topic/concept/keyword score meets the threshold."
+            ),
+            "resource_shares_topic_with_resource": (
+                "Both resources match the same canonical topic."
+            ),
+            "resource_shares_concept_with_resource": (
+                "Both resources mention the same concept slug."
+            ),
+            "resource_same_source_type_as_resource": (
+                "Both resources share a source type and at least one of "
+                "topic/concept/keyword overlap."
+            ),
+            "resource_may_be_prerequisite_for_resource": (
+                "Asymmetric: shallower resource may be a prerequisite for "
+                "the deeper one on the same topic."
+            ),
+            "resource_may_expand_on_resource": (
+                "Asymmetric: deeper resource may expand on the shallower "
+                "one on the same topic."
+            ),
+        }
+        lines.extend(["", "## Per-type details", ""])
+        for edge_type in sorted(RESOURCE_RELATIONSHIP_EDGE_TYPES):
+            if rel_counts.get(edge_type, 0) == 0:
+                continue
+            lines.append(f"### `{edge_type}`")
+            lines.append("")
+            lines.append(descriptions.get(edge_type, ""))
+            lines.append("")
+            matching = [
+                e for e in edges if e.get("type") == edge_type
+            ]
+            # Sort: highest score first, then by edge id for stability.
+            matching.sort(
+                key=lambda e: (
+                    -float((e.get("metadata") or {}).get("score", 0.0)),
+                    e.get("id", ""),
+                )
+            )
+            top = matching[:20]
+            lines.extend([
+                "| Source | Target | Score | Reasons | Shared topics | Shared concepts | Shared keywords |",
+                "|---|---|---:|---|---|---|---|",
+            ])
+            for edge in top:
+                meta = edge.get("metadata") or {}
+                source_label = labels_by_id.get(edge.get("source"), edge.get("source", ""))
+                target_label = labels_by_id.get(edge.get("target"), edge.get("target", ""))
+                reasons = ", ".join(meta.get("reasons", []) or [])
+                shared_topics = ", ".join(meta.get("shared_topics", []) or [])
+                shared_concepts = ", ".join(meta.get("shared_concepts", []) or [])
+                shared_keywords = ", ".join(meta.get("shared_keywords", []) or [])
+                score = meta.get("score", 0.0)
+                lines.append(
+                    f"| {md_table_cell(source_label)} | "
+                    f"{md_table_cell(target_label)} | {score} | "
+                    f"{md_table_cell(reasons)} | "
+                    f"{md_table_cell(shared_topics)} | "
+                    f"{md_table_cell(shared_concepts)} | "
+                    f"{md_table_cell(shared_keywords)} |"
+                )
+            if len(matching) > 20:
+                lines.append("")
+                lines.append(
+                    f"_Showing top 20 of {len(matching)} edges for this type._"
+                )
+            lines.append("")
+
+        lines.extend([
+            "## Provenance",
+            "",
+            f"- Generated: {graph.get('generated_at', '')}",
+            "- Detection: deterministic, no LLM, no embeddings, no BM25.",
+            "",
+        ])
+        Storage.write_text("\n".join(lines), graph_dir / "resource-relationships.md")
+
+    def _build_graph_viewer_page(self, graph: dict) -> None:
+        """Write the static graph viewer page (Prompt 25).
+
+        The page is a Markdown file with embedded vanilla
+        HTML/CSS/JavaScript. The Python side computes a small set of
+        summary fields (schema version, counts, top-N node ids, type
+        lists) and substitutes them into the in-repo template
+        ``site/docs/graph/viewer.md``. The JS reads the graph JSON
+        at runtime via ``fetch``.
+
+        The template path is computed from the ``wiki.site.builder``
+        module's location (the in-repo source of truth), not from
+        ``self.repo_site_dir``. This is important for tests: they
+        may instantiate a :class:`SiteBuilder` with a temporary
+        ``repo_site_dir`` that does not contain the template, and
+        they should still be able to build the viewer. The template
+        lives in the git repo alongside the other static Markdown
+        files; the build process reads it and writes the rendered
+        Markdown into ``self.data_site_dir / "graph" / "viewer.md"``,
+        which is then synced to the repo site directory by
+        :meth:`_sync_to_repo_site`.
+
+        The viewer is only generated when there is at least one
+        node, matching the gating rule for the index page.
+        """
+        from wiki.graph.viewer import viewer_markdown
+
+        nodes = graph.get("nodes", []) or []
+        if not nodes:
+            # No nodes: skip viewer (same gating as index page).
+            return
+
+        graph_dir = self.data_site_dir / "graph"
+        graph_dir.mkdir(parents=True, exist_ok=True)
+
+        # Read the in-repo template. The template is checked into
+        # the git repo at ``harish-llm-wiki/site/docs/graph/viewer.md``;
+        # compute that path from the module location rather than
+        # from ``self.repo_site_dir`` (which tests may rebind).
+        module_template_path = (
+            Path(__file__).parent.parent.parent
+            / "site"
+            / "docs"
+            / "graph"
+            / "viewer.md"
+        )
+        template_path = module_template_path
+        if not template_path.exists():
+            # Fallback: try the configured repo_site_dir.
+            template_path = self.repo_site_dir / "graph" / "viewer.md"
+        if not template_path.exists():
+            # Defensive: if the template was deleted from the repo
+            # we skip rather than crash the build.
+            print(
+                f"  [yellow]⚠[/yellow] Graph viewer template missing: "
+                f"{template_path}"
+            )
+            return
+
+        template = template_path.read_text(encoding="utf-8")
+        rendered = viewer_markdown(graph, template)
+        Storage.write_text(rendered, graph_dir / "viewer.md")
+
+    def _copy_generated_section(self, section: str) -> None:
+        """Copy a generated site section from external data if it exists."""
+        source = config.get_data_path("processed", section)
+        if section in {"explorer", "sources", "public"}:
+            source = self.data_site_dir / section
+        if not source.exists():
+            return
+        dest = self.data_site_dir / section
+        if dest.exists() and dest != source:
+            shutil.rmtree(dest)
+        if source.is_dir() and dest != source:
+            shutil.copytree(source, dest)
     
     def _sync_to_repo_site(self) -> None:
         """Sync generated content to repo site directory."""
@@ -308,13 +619,13 @@ Do not publish publicly unless content is appropriate for public sharing.
             "",
             "| Field | Value |",
             "|---|---|",
-            f"| Type | {record.source_type.value} |",
-            f"| Author/channel | {self._table_value(record.author or 'Unknown')} |",
-            f"| Source URL | {self._table_value(src_url)} |",
-            f"| Processed | {self._table_value(record.status.value)} |",
-            f"| Provider | {self._table_value(record.llm_provider or 'Unknown')} |",
-            f"| Model | {self._table_value(record.llm_model or 'Unknown')} |",
-            f"| Prompt version | {self._table_value(record.prompt_version or 'Unknown')} |",
+            f"| Type | {md_table_cell(record.source_type.value)} |",
+            f"| Author/channel | {md_table_cell(record.author or 'Unknown')} |",
+            f"| Source URL | {md_table_cell(src_url)} |",
+            f"| Processed | {md_table_cell(record.status.value)} |",
+            f"| Provider | {md_table_cell(record.llm_provider or 'Unknown')} |",
+            f"| Model | {md_table_cell(record.llm_model or 'Unknown')} |",
+            f"| Prompt version | {md_table_cell(record.prompt_version or 'Unknown')} |",
         ]
         if record.published_at:
             lines.append(f"| Published/uploaded | {record.published_at.date().isoformat()} |")
@@ -341,9 +652,6 @@ Do not publish publicly unless content is appropriate for public sharing.
             return "\n".join(lines[1:]).lstrip()
         return content
 
-    def _table_value(self, value: str) -> str:
-        """Escape a value for a Markdown table."""
-        return str(value).replace("|", "\\|")
 
     def _yaml_escape(self, value: str) -> str:
         """Escape a string for a simple double-quoted YAML scalar."""
