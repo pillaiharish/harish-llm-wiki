@@ -600,13 +600,13 @@ The original resource did not explain hybrid retrieval.
 
 ```
 ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│   Inputs    │───▶│   Registry   │───▶│   Ingest    │───▶│  Normalize  │
+│   Inputs    │───▶│   Registry  │───▶│   Ingest    │───▶│  Normalize  │
 │  (URLs/MD)  │    │  (SQLite)   │    │  (Fetch)    │    │   (Chunk)   │
 └─────────────┘    └─────────────┘    └─────────────┘    └──────┬──────┘
-                                                                  │
+                                                                │
 ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌──────┴──────┐
-│    dist/     │◀───│    Site     │◀───│  Generate   │◀───│     LLM     │
-│  (Static)   │    │  (VitePress)│    │   (Notes)   │    │  (Provider)  │
+│    dist/    │◀───│    Site     │◀───│  Generate   │◀───│     LLM     │
+│  (Static)   │    │  (VitePress)│    │   (Notes)   │    │  (Provider) │
 └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
 ```
 

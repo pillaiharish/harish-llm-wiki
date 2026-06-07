@@ -1276,23 +1276,36 @@ class TestPrompt31Boundaries:
                 )
 
     def test_no_prompt32_files_added(self):
-        forbidden_paths = [
-            "scripts/verify_retrieval_eval_report.py",
-            "tests/test_prompt32_retrieval_eval_report.py",
+        # Prompt 32 has landed: the verify script and the
+        # test file now exist. This test now asserts that
+        # Prompt 31 did not also accidentally add a duplicate
+        # eval-report module in a different runtime location.
+        prompt31_forbidden = [
+            "wiki/retrieval_eval_report.py",
+            "wiki/site/eval_report.py",
+            "wiki/retrieval/report.py",
         ]
-        for rel in forbidden_paths:
+        for rel in prompt31_forbidden:
             assert not (REPO_ROOT / rel).exists(), (
-                f"Prompt 32 file present: {rel}"
+                f"Prompt 31 accidentally added a duplicate eval report module: {rel}"
             )
 
     def test_no_static_search_eval_page_added(self):
-        eval_page = REPO_ROOT / "site" / "docs" / "search" / "eval.md"
-        eval_index_page = REPO_ROOT / "site" / "docs" / "search" / "eval" / "index.md"
-        site_eval = REPO_ROOT / "site_generated" / "docs" / "search" / "eval.md"
-        site_eval_index = REPO_ROOT / "site_generated" / "docs" / "search" / "eval" / "index.md"
-        for path in (eval_page, eval_index_page, site_eval, site_eval_index):
+        # Prompt 32 has landed: site/docs/search/eval.md is
+        # now the expected static report page. This test now
+        # asserts that Prompt 31 did not add duplicate eval
+        # report pages in unsupported locations.
+        prompt31_forbidden = [
+            REPO_ROOT / "site" / "docs" / "eval.md",
+            REPO_ROOT / "site" / "docs" / "eval" / "index.md",
+            REPO_ROOT / "site" / "docs" / "retrieval-eval.md",
+            REPO_ROOT / "site_generated" / "docs" / "eval.md",
+            REPO_ROOT / "site_generated" / "docs" / "eval" / "index.md",
+            REPO_ROOT / "site_generated" / "docs" / "retrieval-eval.md",
+        ]
+        for path in prompt31_forbidden:
             assert not path.exists(), (
-                f"Prompt 31 must not add /search/eval static report page: {path}"
+                f"Prompt 31 added an out-of-scope eval report page: {path}"
             )
 
     def test_no_bm25_internals_changed(self):
