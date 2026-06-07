@@ -2044,6 +2044,69 @@ def retrieve_cmd(
     console.print(f"\n[dim]Showing {len(results)} result(s).[/dim]")
 
 
+@app.command("eval-retrieval")
+def eval_retrieval(
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON to stdout"),
+    mode: Optional[str] = typer.Option(
+        None,
+        "--mode",
+        help="Restrict evaluation to a single mode: bm25, vector, hybrid, or graph-lite",
+    ),
+    k: Optional[int] = typer.Option(
+        None,
+        "--k",
+        help="Restrict evaluation to a single positive integer k value",
+    ),
+    cases_path: Optional[Path] = typer.Option(
+        None,
+        "--cases-path",
+        help="Optional path to a custom eval cases JSON file (default: tests/fixtures/retrieval_eval/cases.json)",
+    ),
+) -> None:
+    """Run the deterministic retrieval evaluation suite (Prompt 31).
+
+    Loads the checked-in eval cases and runs them against the
+    on-disk BM25 and vector indexes. The default output is a
+    readable text report; pass ``--json`` to emit a JSON
+    document on stdout.
+
+    ``--mode`` restricts the eval to a single retrieval mode;
+    ``--k`` restricts the eval to a single ``k`` value. The
+    report is fully deterministic for a given set of indexes.
+    """
+    from wiki.retrieval import ALLOWED_MODES as _ALLOWED_MODES
+    from wiki.retrieval_eval import load_cases, run_eval
+    from wiki.retrieval_eval.fixtures import EvalCaseError
+    from wiki.retrieval_eval.output import format_json, format_readable
+
+    if mode is not None and mode not in _ALLOWED_MODES:
+        console.print(
+            f"[red]✗[/red] invalid --mode: {mode!r} "
+            f"(allowed: {sorted(_ALLOWED_MODES)})"
+        )
+        raise typer.Exit(1)
+    if k is not None and int(k) < 1:
+        console.print("[red]✗[/red] --k must be >= 1")
+        raise typer.Exit(1)
+
+    try:
+        cases = load_cases(cases_path) if cases_path is not None else load_cases()
+    except FileNotFoundError as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise typer.Exit(1) from exc
+    except EvalCaseError as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    report = run_eval(cases, mode_filter=mode, k_filter=k)
+
+    if json_output:
+        sys.stdout.write(format_json(report))
+        return
+
+    console.print(format_readable(report), end="")
+
+
 @app.command("generate-flashcards")
 def generate_flashcards(
     provider: str = typer.Option("mock", "--provider", help="Provider for optional future generation"),

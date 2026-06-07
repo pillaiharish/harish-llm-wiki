@@ -1,0 +1,65 @@
+{
+  "schema_version": "retrieval_eval_v1",
+  "cases": [
+    {
+      "id": "bm25-lexical-attention",
+      "query": "attention transformer",
+      "expected_resource_ids": ["pdf:01111"],
+      "expected_chunk_ids": [],
+      "expected_terms": ["attention", "transformer"],
+      "modes": ["bm25"],
+      "k_values": [1, 3],
+      "notes": "BM25-friendly lexical query."
+    },
+    {
+      "id": "vector-semantic-attention",
+      "query": "self-attention mechanism",
+      "expected_resource_ids": ["pdf:01111"],
+      "expected_chunk_ids": [],
+      "expected_terms": ["attention", "self"],
+      "modes": ["vector"],
+      "k_values": [1, 3],
+      "notes": "Vector-friendly semantic query."
+    },
+    {
+      "id": "hybrid-mixed-query",
+      "query": "scaled dot-product attention",
+      "expected_resource_ids": ["pdf:01111"],
+      "expected_chunk_ids": [],
+      "expected_terms": ["attention", "scaled"],
+      "modes": ["hybrid"],
+      "k_values": [1, 3],
+      "notes": "Hybrid-mode query."
+    },
+    {
+      "id": "graph-lite-topic-query",
+      "query": "transformer architecture",
+      "expected_resource_ids": ["pdf:01111"],
+      "expected_chunk_ids": [],
+      "expected_terms": ["transformer"],
+      "modes": ["graph-lite"],
+      "k_values": [1, 3],
+      "notes": "Graph-lite mode query."
+    },
+    {
+      "id": "term-coverage-words",
+      "query": "transformer scaled",
+      "expected_resource_ids": [],
+      "expected_chunk_ids": [],
+      "expected_terms": ["transformer", "scaled"],
+      "modes": ["bm25"],
+      "k_values": [1, 2, 3],
+      "notes": "Expected-term coverage only."
+    },
+    {
+      "id": "no-hit-query",
+      "query": "this string should not match anything",
+      "expected_resource_ids": ["pdf:does-not-exist"],
+      "expected_chunk_ids": [],
+      "expected_terms": [],
+      "modes": ["bm25"],
+      "k_values": [1, 3],
+      "notes": "No-hit case: all zero metrics."
+    }
+  ]
+}
