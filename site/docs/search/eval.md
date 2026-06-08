@@ -9,9 +9,9 @@ for a given set of indexes.
 
 - Schema version: `retrieval_eval_v1`
 - Total cases: 6
-- Evaluated modes: bm25, graph-lite, hybrid, vector
-- Evaluated k values: 1, 2, 3
-- Failures: 0
+- Evaluated modes: (none)
+- Evaluated k values: (none)
+- Failures: 6
 
 ## Aggregate metrics
 
@@ -21,77 +21,20 @@ combination (e.g. the BM25 or vector index was unavailable).
 
 | Mode | k | Cases | recall@k | precision@k | hit@k | MRR | expected-term coverage |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| bm25 | 1 | 3 | 0.000 | 0.000 | 0.000 | 0.000 | 0.667 |
-| bm25 | 2 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
-| bm25 | 3 | 3 | 0.000 | 0.000 | 0.000 | 0.000 | 0.667 |
-| graph-lite | 1 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
-| graph-lite | 3 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
-| hybrid | 1 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
-| hybrid | 3 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
-| vector | 1 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
-| vector | 3 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
+| _none_ | - | 0 | - | - | - | - | - |
 
 ## Per-mode metrics
 
 Same aggregate view, grouped by retrieval mode. The table is the
 transpose of the per-mode+per-k aggregate above.
 
-### `bm25`
-
-| k | Cases | recall@k | precision@k | hit@k | MRR | expected-term coverage |
-|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 3 | 0.000 | 0.000 | 0.000 | 0.000 | 0.667 |
-| 2 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
-| 3 | 3 | 0.000 | 0.000 | 0.000 | 0.000 | 0.667 |
-
-### `graph-lite`
-
-| k | Cases | recall@k | precision@k | hit@k | MRR | expected-term coverage |
-|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
-| 3 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
-
-### `hybrid`
-
-| k | Cases | recall@k | precision@k | hit@k | MRR | expected-term coverage |
-|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
-| 3 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
-
-### `vector`
-
-| k | Cases | recall@k | precision@k | hit@k | MRR | expected-term coverage |
-|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
-| 3 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
+_No per-mode metrics available._
 
 ## Per-k metrics
 
 Same aggregate view, grouped by `k` value.
 
-### `k = 1`
-
-| Mode | Cases | recall@k | precision@k | hit@k | MRR | expected-term coverage |
-|---|---:|---:|---:|---:|---:|---:|
-| bm25 | 3 | 0.000 | 0.000 | 0.000 | 0.000 | 0.667 |
-| graph-lite | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
-| hybrid | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
-| vector | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
-
-### `k = 2`
-
-| Mode | Cases | recall@k | precision@k | hit@k | MRR | expected-term coverage |
-|---|---:|---:|---:|---:|---:|---:|
-| bm25 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
-
-### `k = 3`
-
-| Mode | Cases | recall@k | precision@k | hit@k | MRR | expected-term coverage |
-|---|---:|---:|---:|---:|---:|---:|
-| bm25 | 3 | 0.000 | 0.000 | 0.000 | 0.000 | 0.667 |
-| graph-lite | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
-| hybrid | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
-| vector | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
+_No per-k metrics available._
 
 ## Case results
 
@@ -101,29 +44,27 @@ case produced no successful metric at all.
 
 | Case | Query | Mode | k | recall | precision | hit | MRR | term coverage | Failure |
 |---|---|---|---:|---:|---:|---:|---:|---:|---|
-| bm25-lexical-attention | attention transformer | bm25 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |  |
-| vector-semantic-attention | self-attention mechanism | vector | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |  |
-| hybrid-mixed-query | scaled dot-product attention | hybrid | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |  |
-| graph-lite-topic-query | transformer architecture | graph-lite | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |  |
-| term-coverage-words | transformer scaled | bm25 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |  |
-| no-hit-query | this string should not match anything | bm25 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |  |
+| bm25-lexical-attention | attention transformer | - | - | - | - | - | - | - | BM25 index missing for mode='bm25' |
+| vector-semantic-attention | self-attention mechanism | - | - | - | - | - | - | - | Vector index missing for mode='vector' |
+| hybrid-mixed-query | scaled dot-product attention | - | - | - | - | - | - | - | BM25 index missing for mode='hybrid' |
+| graph-lite-topic-query | transformer architecture | - | - | - | - | - | - | - | BM25 index missing for mode='graph-lite' |
+| term-coverage-words | transformer scaled | - | - | - | - | - | - | - | BM25 index missing for mode='bm25' |
+| no-hit-query | this string should not match anything | - | - | - | - | - | - | - | BM25 index missing for mode='bm25' |
 
 ## Failures and no-hit cases
 
-### Failures (0)
+### Failures (6)
 
-_No failures._
+- `bm25-lexical-attention`: BM25 index missing for mode='bm25'
+- `vector-semantic-attention`: Vector index missing for mode='vector'
+- `hybrid-mixed-query`: BM25 index missing for mode='hybrid'
+- `graph-lite-topic-query`: BM25 index missing for mode='graph-lite'
+- `term-coverage-words`: BM25 index missing for mode='bm25'
+- `no-hit-query`: BM25 index missing for mode='bm25'
 
-### No-hit cases (6)
+### No-hit cases (0)
 
-Cases whose top-k results contained no expected resource or chunk.
-
-- `bm25-lexical-attention`: attention transformer
-- `vector-semantic-attention`: self-attention mechanism
-- `hybrid-mixed-query`: scaled dot-product attention
-- `graph-lite-topic-query`: transformer architecture
-- `term-coverage-words`: transformer scaled
-- `no-hit-query`: this string should not match anything
+_No no-hit cases._
 
 ## Commands
 

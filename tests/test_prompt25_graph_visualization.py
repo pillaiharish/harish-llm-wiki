@@ -11,6 +11,7 @@ assert on the generated files and the viewer-helper functions.
 from pathlib import Path
 
 import pytest
+import re
 
 from wiki.config import config
 from wiki.graph import (
@@ -284,9 +285,9 @@ class TestViewerMarkdown:
         )
         template = template_path.read_text(encoding="utf-8")
         rendered = viewer_markdown(graph, template)
-        assert "/public/graph/nodes.json" in rendered
-        assert "/public/graph/edges.json" in rendered
-        assert "/public/graph/knowledge_graph.json" in rendered
+        assert "/graph/nodes.json" in rendered
+        assert "/graph/edges.json" in rendered
+        assert "/graph/knowledge_graph.json" in rendered
 
     def test_viewer_markdown_includes_resource_relationships_link(
         self, tmp_path, monkeypatch
@@ -388,9 +389,9 @@ class TestGraphViewerPageBuild:
         viewer = builder.data_site_dir / "graph" / "viewer.md"
         content = viewer.read_text(encoding="utf-8")
         for needle in (
-            "/public/graph/nodes.json",
-            "/public/graph/edges.json",
-            "/public/graph/knowledge_graph.json",
+            "/graph/nodes.json",
+            "/graph/edges.json",
+            "/graph/knowledge_graph.json",
         ):
             assert needle in content, f"viewer.md missing {needle}"
 
@@ -408,29 +409,54 @@ class TestGraphViewerPageUI:
         viewer = builder.data_site_dir / "graph" / "viewer.md"
         return viewer.read_text(encoding="utf-8")
 
+    def _viewer_template(self) -> str:
+        """Return the in-repo viewer.md template (the source of truth)."""
+        template_path = (
+            Path(__file__).parent.parent
+            / "site"
+            / "docs"
+            / "graph"
+            / "viewer.md"
+        )
+        return template_path.read_text(encoding="utf-8")
+
+    def _component_source(self) -> str:
+        """Return the GraphExplorer.vue source (where the runtime DOM
+        elements like #graph-search, #graph-canvas, etc. are defined)."""
+        component_path = (
+            Path(__file__).parent.parent
+            / "site"
+            / "docs"
+            / ".vitepress"
+            / "theme"
+            / "components"
+            / "GraphExplorer.vue"
+        )
+        return component_path.read_text(encoding="utf-8")
+
     def test_viewer_page_contains_search_input(self, tmp_path, monkeypatch):
-        content = self._viewer_content(tmp_path, monkeypatch)
-        assert 'id="graph-search"' in content
+        component = self._component_source()
+        assert 'id="graph-search"' in component
 
     def test_viewer_page_contains_node_type_filter(self, tmp_path, monkeypatch):
-        content = self._viewer_content(tmp_path, monkeypatch)
-        assert 'id="graph-filter-node-type"' in content
+        component = self._component_source()
+        assert 'id="graph-filter-node-type"' in component
 
     def test_viewer_page_contains_edge_type_filter(self, tmp_path, monkeypatch):
-        content = self._viewer_content(tmp_path, monkeypatch)
-        assert 'id="graph-filter-edge-type"' in content
+        component = self._component_source()
+        assert 'id="graph-filter-edge-type"' in component
 
     def test_viewer_page_contains_details_panel(self, tmp_path, monkeypatch):
-        content = self._viewer_content(tmp_path, monkeypatch)
-        assert 'id="graph-details"' in content
+        component = self._component_source()
+        assert 'id="graph-details"' in component
 
     def test_viewer_page_contains_neighbor_section(self, tmp_path, monkeypatch):
-        content = self._viewer_content(tmp_path, monkeypatch)
-        assert 'id="graph-neighbors"' in content
+        component = self._component_source()
+        assert 'id="graph-neighbors"' in component
 
     def test_viewer_page_contains_svg_mini_graph(self, tmp_path, monkeypatch):
-        content = self._viewer_content(tmp_path, monkeypatch)
-        assert '<svg id="graph-svg"' in content
+        template = self._viewer_template()
+        assert '<svg id="graph-svg"' in template
 
     def test_viewer_page_links_to_resource_relationships_report(
         self, tmp_path, monkeypatch
@@ -440,7 +466,658 @@ class TestGraphViewerPageUI:
 
 
 # -----------------------------------------------------------------------------
-# Test class 5: TestSmokeAndValidate
+# Test class 5: TestGraphExplorerComponent (Prompt 35)
+# -----------------------------------------------------------------------------
+
+
+class TestGraphExplorerComponent:
+    """Prompt 35: real interactive Cytoscape.js graph explorer."""
+
+    def _theme_dir(self) -> Path:
+        return (
+            Path(__file__).parent.parent
+            / "site"
+            / "docs"
+            / ".vitepress"
+            / "theme"
+        )
+
+    def _viewer_template(self) -> str:
+        template_path = (
+            Path(__file__).parent.parent
+            / "site"
+            / "docs"
+            / "graph"
+            / "viewer.md"
+        )
+        return template_path.read_text(encoding="utf-8")
+
+    def test_component_file_exists(self):
+        component = self._theme_dir() / "components" / "GraphExplorer.vue"
+        assert component.exists(), f"missing {component}"
+
+    def test_theme_index_registers_component(self):
+        index_ts = self._theme_dir() / "index.ts"
+        assert index_ts.exists(), f"missing {index_ts}"
+        text = index_ts.read_text(encoding="utf-8")
+        assert "GraphExplorer" in text
+        assert "app.component" in text
+
+    def test_component_imports_cytoscape_dynamically(self):
+        component_path = self._theme_dir() / "components" / "GraphExplorer.vue"
+        text = component_path.read_text(encoding="utf-8")
+        # Cytoscape must be loaded via a dynamic import so SSR
+        # doesn't try to evaluate it server-side.
+        assert "import('cytoscape')" in text or 'import("cytoscape")' in text
+        # It must be the only top-level cytoscape import in the SFC.
+        assert "from 'cytoscape'" not in text
+        assert 'from "cytoscape"' not in text
+
+    def test_component_has_canvas_with_minimum_height(self):
+        component_path = self._theme_dir() / "components" / "GraphExplorer.vue"
+        text = component_path.read_text(encoding="utf-8")
+        # The cytoscape container must be marked with id="graph-canvas"
+        # and have a height >= 600px.
+        assert 'id="graph-canvas"' in text
+        # Look for either an inline style declaration or a CSS
+        # selector that sets the height to 600 or more.
+        assert (
+            "min-height: 600px" in text
+            or "height: 600px" in text
+            or "height: 640px" in text
+            or "min-height:600px" in text
+        )
+
+    def test_component_renders_required_controls(self):
+        component_path = self._theme_dir() / "components" / "GraphExplorer.vue"
+        text = component_path.read_text(encoding="utf-8")
+        for control_id in (
+            "graph-fit",
+            "graph-reset-zoom",
+            "graph-zoom-in",
+            "graph-zoom-out",
+            "graph-show-all",
+            "graph-search",
+            "graph-filter-node-type",
+            "graph-filter-edge-type",
+        ):
+            assert f'id="{control_id}"' in text, (
+                f"GraphExplorer.vue missing required control id {control_id!r}"
+            )
+
+    def test_component_destroys_cytoscape_on_unmount(self):
+        component_path = self._theme_dir() / "components" / "GraphExplorer.vue"
+        text = component_path.read_text(encoding="utf-8")
+        assert "onBeforeUnmount" in text
+        assert "destroy" in text
+
+    def test_component_uses_resize_observer(self):
+        """Prompt 35.1: the explorer must observe the canvas size
+        and call cy.resize() / cy.fit() on resize events."""
+        component_path = self._theme_dir() / "components" / "GraphExplorer.vue"
+        text = component_path.read_text(encoding="utf-8")
+        assert "ResizeObserver" in text, "GraphExplorer must use a ResizeObserver"
+        assert "cy.resize" in text, "GraphExplorer must call cy.resize() on resize"
+        assert "cy.fit" in text, "GraphExplorer must call cy.fit() on resize"
+
+    def test_component_calls_fit_on_initial_load(self):
+        """Prompt 35.1: fit must be called once after the initial
+        layout so the first paint is well-framed."""
+        component_path = self._theme_dir() / "components" / "GraphExplorer.vue"
+        text = component_path.read_text(encoding="utf-8")
+        assert "cy.fit(undefined, FIT_PADDING)" in text or (
+            "cy.fit(" in text and "FIT_PADDING" in text
+        ), "GraphExplorer must call cy.fit with the configured padding on initial load"
+
+    def test_component_does_not_fit_on_zoom(self):
+        """Prompt 35.1: a mouse-wheel zoom event must NOT auto-fit
+        the graph. That would break user-controlled zoom.
+        """
+        component_path = self._theme_dir() / "components" / "GraphExplorer.vue"
+        text = component_path.read_text(encoding="utf-8")
+        # Find the zoom handler block. It must not invoke cy.fit().
+        zoom_idx = text.find("cy.on('zoom'")
+        assert zoom_idx != -1, "GraphExplorer must register a zoom event handler"
+        # The handler is the function passed to cy.on('zoom', ...).
+        # Find the closing `})` that ends the handler.
+        start = text.find("=>", zoom_idx)
+        handler = text[start: start + 400]
+        end = handler.find("})")
+        if end != -1:
+            handler = handler[: end + 2]
+        assert "cy.fit" not in handler, (
+            "Zoom event handler must not call cy.fit() — that would override user zoom"
+        )
+
+    def test_component_pads_fit_with_40(self):
+        """Prompt 35.1: cy.fit() must be invoked with padding 40
+        on initial load and after re-renders, not the previous 30."""
+        component_path = self._theme_dir() / "components" / "GraphExplorer.vue"
+        text = component_path.read_text(encoding="utf-8")
+        assert "FIT_PADDING = 40" in text, (
+            "GraphExplorer must declare a 40-pixel fit padding constant"
+        )
+        assert "cy.fit(undefined, FIT_PADDING)" in text, (
+            "GraphExplorer must call cy.fit(undefined, FIT_PADDING) for refits"
+        )
+
+    def test_component_marks_high_degree_nodes_as_hubs(self):
+        """Prompt 35.1: high-degree nodes must show their labels
+        at lower zooms. The HUB_DEGREE_THRESHOLD constant must be
+        present and applied in the stylesheet."""
+        component_path = self._theme_dir() / "components" / "GraphExplorer.vue"
+        text = component_path.read_text(encoding="utf-8")
+        assert "HUB_DEGREE_THRESHOLD" in text
+        assert "node[degree >=" in text, (
+            "GraphExplorer must use a node[degree >= ...] style selector for hubs"
+        )
+
+    def test_component_reruns_layout_on_node_set_change(self):
+        """Prompt 35.1: re-rendering must recompute the cose
+        layout whenever the visible node set changes."""
+        component_path = self._theme_dir() / "components" / "GraphExplorer.vue"
+        text = component_path.read_text(encoding="utf-8")
+        assert "nodeSetChanged" in text or "node_set_changed" in text or (
+            "coseLayoutOptions" in text and "lastNodeIdSet" in text
+        ), "GraphExplorer must re-run the layout when the node set changes"
+
+    def test_component_uses_deterministic_layout(self):
+        """Prompt 35.1: layout must be deterministic
+        (randomize: false) for reproducibility."""
+        component_path = self._theme_dir() / "components" / "GraphExplorer.vue"
+        text = component_path.read_text(encoding="utf-8")
+        assert "randomize: false" in text
+        assert "coseLayoutOptions" in text
+
+    def test_component_disconnects_resize_observer_on_unmount(self):
+        """Prompt 35.1: ResizeObserver must be torn down on unmount."""
+        component_path = self._theme_dir() / "components" / "GraphExplorer.vue"
+        text = component_path.read_text(encoding="utf-8")
+        assert "teardownResizeObserver" in text
+        assert "disconnect" in text
+
+    def test_template_mounts_graph_explorer(self):
+        text = self._viewer_template()
+        assert "<GraphExplorer />" in text
+
+    def test_template_keeps_legacy_svg_mini_graph(self):
+        text = self._viewer_template()
+        assert '<svg id="graph-svg"' in text
+
+    def test_template_keeps_noscript_fallback(self):
+        text = self._viewer_template()
+        assert "<noscript>" in text
+        assert "</noscript>" in text
+
+    def test_template_keeps_legacy_initgraphviewer_hook(self):
+        """The companion <script> in viewer.md keeps the
+        ``initGraphViewer`` function name and the
+        ``import.meta.env.BASE_URL`` literal so existing Prompt 25
+        test contracts continue to pass.
+        """
+        text = self._viewer_template()
+        assert "initGraphViewer" in text
+        assert "import.meta.env.BASE_URL" in text
+
+    def test_package_json_declares_cytoscape_dependency(self):
+        package_json = (
+            Path(__file__).parent.parent
+            / "site"
+            / "package.json"
+        )
+        text = package_json.read_text(encoding="utf-8")
+        assert '"cytoscape"' in text
+        # Cytoscape must be in the runtime `dependencies`, not just
+        # `devDependencies`, so the static dist works.
+        import json
+
+        data = json.loads(text)
+        assert "cytoscape" in data.get("dependencies", {})
+
+    # ------------------------------------------------------------------
+    # Prompt 35.2 — Semantic zoom and graph spacing
+    # ------------------------------------------------------------------
+
+    def _component_text(self) -> str:
+        component_path = self._theme_dir() / "components" / "GraphExplorer.vue"
+        return component_path.read_text(encoding="utf-8")
+
+    def test_component_defines_apply_semantic_zoom(self):
+        """Prompt 35.2: the explorer must define an
+        applySemanticZoom() function and call it everywhere the
+        spec lists."""
+        text = self._component_text()
+        assert "function applySemanticZoom" in text, (
+            "GraphExplorer must define applySemanticZoom()"
+        )
+        # Required call sites per the Prompt 35.2 spec.
+        assert "applySemanticZoom()" in text, (
+            "GraphExplorer must call applySemanticZoom()"
+        )
+        # The function must be reachable from every event path:
+        # initial load, cy zoom, node select, hover, re-render, and
+        # the four graph buttons.
+        for needle in (
+            "cy.on('zoom'",
+            "cy.on('tap', 'node'",
+            "cy.on('mouseover', 'node'",
+            "reRenderCy",
+            "fitGraph",
+            "resetZoom",
+            "zoomIn",
+            "zoomOut",
+        ):
+            assert needle in text, f"missing handler: {needle}"
+        # The cy.on('zoom', ...) handler must call applySemanticZoom.
+        zoom_idx = text.find("cy.on('zoom'")
+        assert zoom_idx != -1
+        after = text[zoom_idx: zoom_idx + 400]
+        assert "applySemanticZoom" in after, (
+            "cy.on('zoom', ...) handler must call applySemanticZoom"
+        )
+
+    def test_component_does_not_fit_inside_zoom_handler(self):
+        """Prompt 35.2: a mouse-wheel zoom event must NOT auto-fit
+        the graph. Semantic zoom must not steal user-controlled
+        wheel zoom."""
+        text = self._component_text()
+        zoom_idx = text.find("cy.on('zoom'")
+        assert zoom_idx != -1
+        start = text.find("=>", zoom_idx)
+        handler = text[start: start + 400]
+        end = handler.find("})")
+        if end != -1:
+            handler = handler[: end + 2]
+        assert "cy.fit" not in handler, (
+            "Zoom event handler must not call cy.fit()"
+        )
+
+    def test_component_declares_semantic_zoom_tiers(self):
+        """Prompt 35.2: three semantic tiers (low / medium / high)
+        drive the per-zoom font and node sizing."""
+        text = self._component_text()
+        for needle in (
+            "ZOOM_TIER_LOW_MAX",
+            "ZOOM_TIER_HIGH_MIN",
+            "SEMANTIC_TIER_SPECS",
+            "currentTier",
+            "pickSemanticTier",
+        ):
+            assert needle in text, f"missing semantic-zoom symbol: {needle}"
+        # The tier record must define font-size, node-size, and a
+        # hub size for every tier.
+        assert "fontSize:" in text
+        assert "nodeSize:" in text
+        assert "hubNodeSize:" in text
+
+    def test_component_uses_controlled_font_sizes(self):
+        """Prompt 35.2: font sizes are picked from a fixed set so
+        they never scale endlessly with zoom."""
+        text = self._component_text()
+        # The tier font sizes must be small integers (0, 7, 8, 9, 10
+        # or close to that band).
+        import re
+
+        # Look for the three tier spec blocks.
+        spec_match = re.search(
+            r"SEMANTIC_TIER_SPECS:\s*Record<SemanticTier,\s*SemanticTierSpec>"
+            r"\s*=\s*\{(.*?)\n  \}\n",
+            text,
+            re.DOTALL,
+        )
+        assert spec_match, "SEMANTIC_TIER_SPECS literal not found"
+        body = spec_match.group(1)
+        # Each tier has a fontSize: <number> field.
+        font_sizes = [int(m.group(1)) for m in re.finditer(r"fontSize:\s*(\d+)", body)]
+        assert font_sizes, "no fontSize fields in SEMANTIC_TIER_SPECS"
+        # All values must be in the controlled band 0..12 px.
+        for fs in font_sizes:
+            assert 0 <= fs <= 12, (
+                f"font size {fs} outside controlled band 0..12"
+            )
+        # Low-zoom font size should be 0 (labels hidden) to satisfy
+        # the "zoom out hides cluttered labels" acceptance criterion.
+        assert 0 in font_sizes, (
+            "low-zoom font size should be 0 to hide labels at low zoom"
+        )
+
+    def test_component_uses_controlled_node_sizes(self):
+        """Prompt 35.2: node sizes are picked from a fixed band
+        per tier (10-12, 16-20, 22-26)."""
+        text = self._component_text()
+        import re
+
+        spec_match = re.search(
+            r"SEMANTIC_TIER_SPECS:\s*Record<SemanticTier,\s*SemanticTierSpec>"
+            r"\s*=\s*\{(.*?)\n  \}\n",
+            text,
+            re.DOTALL,
+        )
+        assert spec_match
+        body = spec_match.group(1)
+        node_sizes = [int(m.group(1)) for m in re.finditer(r"nodeSize:\s*(\d+)", body)]
+        assert node_sizes, "no nodeSize fields in SEMANTIC_TIER_SPECS"
+        # The lowest tier's node size must be in 10-12.
+        assert min(node_sizes) >= 10 and min(node_sizes) <= 12, (
+            f"lowest-tier node size {min(node_sizes)} should be in 10..12"
+        )
+        # The highest tier's node size must be in 22-26.
+        assert max(node_sizes) >= 22 and max(node_sizes) <= 26, (
+            f"highest-tier node size {max(node_sizes)} should be in 22..26"
+        )
+
+    def test_component_does_not_duplicate_dom_ids(self):
+        """Prompt 35.2: the explorer template must not declare any
+        DOM id twice."""
+        import re
+
+        text = self._component_text()
+        # Slice the <template> block only.
+        tmpl_match = re.search(r"<template>(.*?)</template>", text, re.DOTALL)
+        assert tmpl_match, "no <template> block found"
+        tmpl = tmpl_match.group(1)
+        # Match only literal ``id="..."`` HTML attributes. Skip
+        # Vue bindings like ``:id="..."`` and ``:data-foo-id="..."``
+        # by requiring the character before ``id=`` to be a
+        # whitespace character (start of attribute or after space).
+        ids = re.findall(r'(?<=\s)id="([^"]+)"', tmpl)
+        seen: dict[str, int] = {}
+        for i in ids:
+            seen[i] = seen.get(i, 0) + 1
+        duplicates = sorted([k for k, v in seen.items() if v > 1])
+        assert not duplicates, (
+            f"GraphExplorer.vue has duplicate template DOM ids: {duplicates}"
+        )
+
+    def test_component_keeps_selected_and_neighbor_labels_visible(self):
+        """Prompt 35.2: the selected node and its closed
+        neighbourhood must keep their labels visible regardless of
+        zoom tier."""
+        text = self._component_text()
+        # The role-class pass must unconditionally remove hide-labels
+        # for selected / inNeighborhood / hover regardless of tier
+        # (low or medium). The "high" branch removes hide-labels
+        # for everyone, so we just check the low/medium logic.
+        assert "isSelected || inNeighborhood || isHover" in text, (
+            "applyNodeRoleClasses must unconditionally un-hide selected / neighbour / hovered nodes"
+        )
+        # And the hub threshold must tighten at low zoom to keep
+        # the visible label set small.
+        assert "HUB_DEGREE_THRESHOLD_LOW_ZOOM" in text
+
+    def test_component_layout_is_dense_graph_friendly(self):
+        """Prompt 35.2: tune the cose layout for ~65 nodes / ~1069
+        edges. The previous (Prompt 35.1) values of
+        nodeRepulsion=12000 and idealEdgeLength=80 were still too
+        dense for this graph; the spec asks us to increase both
+        knobs."""
+        text = self._component_text()
+        # nodeRepulsion must be higher than the Prompt 35.1 value
+        # of 12000.
+        import re
+
+        rep_match = re.search(r"nodeRepulsion:\s*\(\)\s*=>\s*(\d+)", text)
+        assert rep_match, "nodeRepulsion option missing"
+        rep = int(rep_match.group(1))
+        assert rep > 12000, (
+            f"nodeRepulsion should be > 12000 for a 65-node / 1069-edge graph, got {rep}"
+        )
+        # idealEdgeLength must be higher than the Prompt 35.1 value
+        # of 80.
+        ed_match = re.search(r"idealEdgeLength:\s*\(\)\s*=>\s*(\d+)", text)
+        assert ed_match, "idealEdgeLength option missing"
+        ed = int(ed_match.group(1))
+        assert ed > 80, (
+            f"idealEdgeLength should be > 80 for a 65-node / 1069-edge graph, got {ed}"
+        )
+        # Determinism must be preserved.
+        assert "randomize: false" in text
+        assert "coseLayoutOptions" in text
+
+    def test_component_zoom_event_handler_does_not_call_fit(self):
+        """Prompt 35.2: double-check that the cy.on('zoom', ...)
+        handler never calls cy.fit(), even after Prompt 35.2
+        refactors."""
+        text = self._component_text()
+        zoom_idx = text.find("cy.on('zoom'")
+        assert zoom_idx != -1
+        # Capture the handler body up to its closing `})`.
+        start = text.find("=>", zoom_idx)
+        handler = text[start: start + 400]
+        end = handler.find("})")
+        if end != -1:
+            handler = handler[: end + 2]
+        assert "applySemanticZoom" in handler, (
+            "cy.on('zoom', ...) handler must call applySemanticZoom"
+        )
+        assert "cy.fit" not in handler, (
+            "cy.on('zoom', ...) handler must not call cy.fit()"
+        )
+
+    def test_component_applies_semantic_zoom_on_filter_rerender(self):
+        """Prompt 35.2: applySemanticZoom() must run on every
+        filter / search / show-all rerender path, not just the
+        cy.on('zoom', ...) path."""
+        text = self._component_text()
+        # reRenderCy is the function that handles all the filter
+        # and search rerender paths. It must end with
+        # applySemanticZoom().
+        rerender_idx = text.find("function reRenderCy")
+        assert rerender_idx != -1
+        after = text[rerender_idx: rerender_idx + 1200]
+        assert "applySemanticZoom" in after, (
+            "reRenderCy must call applySemanticZoom() to keep semantic styling"
+        )
+
+    def test_component_applies_semantic_zoom_on_fit_and_reset(self):
+        """Prompt 35.2: applySemanticZoom() must run after the
+        Fit graph, Reset zoom, Zoom in, and Zoom out buttons."""
+        text = self._component_text()
+        for fn in ("function fitGraph", "function resetZoom", "function zoomIn", "function zoomOut"):
+            idx = text.find(fn)
+            assert idx != -1, f"missing {fn}"
+            after = text[idx: idx + 600]
+            assert "applySemanticZoom" in after, (
+                f"{fn} must call applySemanticZoom()"
+            )
+
+    def test_component_does_not_have_huge_font_at_zoom_4(self):
+        """Prompt 35.2 acceptance: zooming in must not make
+        labels absurdly huge. The highest tier's selectedFontSize
+        is the largest font in the stylesheet and it must stay in
+        the 7..12 px band."""
+        text = self._component_text()
+        import re
+
+        spec_match = re.search(
+            r"SEMANTIC_TIER_SPECS:\s*Record<SemanticTier,\s*SemanticTierSpec>\s*=\s*\{(.*?)\n  \}\n",
+            text,
+            re.DOTALL,
+        )
+        assert spec_match
+        body = spec_match.group(1)
+        sizes = [int(m.group(1)) for m in re.finditer(r"selectedFontSize:\s*(\d+)", body)]
+        assert sizes, "no selectedFontSize in SEMANTIC_TIER_SPECS"
+        assert max(sizes) <= 12, (
+            f"selectedFontSize max {max(sizes)} should stay <= 12 px"
+        )
+
+    # ------------------------------------------------------------------
+    # Prompt 35.3 — Label visibility after semantic zoom
+    # ------------------------------------------------------------------
+
+    def test_component_hide_labels_comes_before_selected_rules(self):
+        """Prompt 35.3: the ``node.hide-labels`` selector must
+        appear in ``makeStyle()`` BEFORE the ``node:selected`` /
+        ``.highlighted`` / ``node.hovered`` rules so those rules
+        (which appear later in the array) win over hide-labels
+        and the selected/hovered node always shows its label.
+
+        The previous Prompt 35.2 implementation had
+        ``node.hide-labels`` placed *after* ``node:selected``
+        and ``.highlighted``, so a class leak on the selected
+        node was overriding the visible label.
+        """
+        text = self._component_text()
+        # Find the makeStyle() function body and look at the
+        # relative order of the three selectors.
+        make_idx = text.find("function makeStyle")
+        assert make_idx != -1, "makeStyle() not found"
+        # Search for the three selectors and capture their offsets
+        # within the makeStyle body.
+        body = text[make_idx: make_idx + 8000]
+        hide_idx = body.find("'node.hide-labels'")
+        if hide_idx == -1:
+            hide_idx = body.find('"node.hide-labels"')
+        sel_idx = body.find("'node:selected'")
+        if sel_idx == -1:
+            sel_idx = body.find('"node:selected"')
+        highlighted_idx = body.find("'.highlighted'")
+        if highlighted_idx == -1:
+            highlighted_idx = body.find('".highlighted"')
+        assert hide_idx != -1, "node.hide-labels selector not found in makeStyle"
+        assert sel_idx != -1, "node:selected selector not found in makeStyle"
+        assert highlighted_idx != -1, ".highlighted selector not found in makeStyle"
+        # hide-labels must come first so the later rules win.
+        assert hide_idx < sel_idx, (
+            "node.hide-labels must be declared BEFORE node:selected in makeStyle"
+        )
+        assert hide_idx < highlighted_idx, (
+            "node.hide-labels must be declared BEFORE .highlighted in makeStyle"
+        )
+
+    def test_component_base_node_style_shows_label(self):
+        """Prompt 35.3: the base ``node`` rule must set
+        ``label: 'data(label)'`` so that any node whose
+        ``hide-labels`` class is removed actually has a label to
+        render. The previous Prompt 35.2 implementation set
+        ``label: ''`` in the base rule, which meant non-hub
+        nodes never showed a label even at high zoom.
+        """
+        text = self._component_text()
+        make_idx = text.find("function makeStyle")
+        assert make_idx != -1
+        body = text[make_idx: make_idx + 1500]
+        # The first node selector in makeStyle is the base node
+        # rule. Find the first occurrence of `label: 'data(label)'`
+        # near a "node" selector.
+        base_node_match = re.search(
+            r"selector:\s*['\"]node['\"][^}]*?label:\s*'data\(label\)'",
+            body,
+            re.DOTALL,
+        )
+        assert base_node_match, (
+            "base 'node' rule in makeStyle must set label: 'data(label)' "
+            "so labels are visible by default"
+        )
+
+    def test_component_role_classes_unconditional_remove_for_selected(self):
+        """Prompt 35.3: in ``applyNodeRoleClasses`` the
+        selected / neighbor / hover branch must be evaluated
+        before any tier check, so a node that is selected
+        always loses its hide-labels class regardless of the
+        current tier.
+        """
+        text = self._component_text()
+        # The unconditional remove is a single if statement whose
+        # first condition is `isSelected || inNeighborhood ||
+        # isHover`. Check that this exact expression appears in
+        # applyNodeRoleClasses.
+        role_idx = text.find("function applyNodeRoleClasses")
+        assert role_idx != -1
+        body = text[role_idx: role_idx + 2500]
+        # Look for the pattern `if (isSelected || inNeighborhood || isHover) {`
+        # followed by `n.removeClass('hide-labels')`.
+        m = re.search(
+            r"if\s*\(\s*isSelected\s*\|\|\s*inNeighborhood\s*\|\|\s*isHover\s*\)\s*\{\s*n\.removeClass\('hide-labels'\)",
+            body,
+        )
+        assert m, (
+            "applyNodeRoleClasses must unconditionally remove hide-labels "
+            "for selected / neighbor / hover, before any tier-specific branch"
+        )
+
+    def test_component_role_classes_hovered_class_tracking(self):
+        """Prompt 35.3: the role-class pass must add / remove
+        the ``hovered`` class on every node so the matching
+        stylesheet rule (placed AFTER ``node.hide-labels``)
+        wins for the hovered node."""
+        text = self._component_text()
+        role_idx = text.find("function applyNodeRoleClasses")
+        assert role_idx != -1
+        body = text[role_idx: role_idx + 2500]
+        assert "n.addClass('hovered')" in body, (
+            "applyNodeRoleClasses must add the 'hovered' class when isHover is true"
+        )
+        assert "n.removeClass('hovered')" in body, (
+            "applyNodeRoleClasses must remove the 'hovered' class when isHover is false"
+        )
+
+    def test_component_exposes_graph_label_debug_helper(self):
+        """Prompt 35.3: the component must attach a
+        ``window.__graphLabelDebug`` helper that returns
+        {ready, zoom, tier, counts: {visible, hidden, total}}."""
+        text = self._component_text()
+        assert "__graphLabelDebug" in text, (
+            "GraphExplorer must expose window.__graphLabelDebug"
+        )
+        # The helper should be wired inside buildCy() or
+        # onMounted and return counts.visible / counts.hidden /
+        # counts.total.
+        assert "counts.visible" in text or "visible: visible.length" in text, (
+            "__graphLabelDebug must report a counts.visible field"
+        )
+        assert "counts.hidden" in text or "hidden: hidden.length" in text, (
+            "__graphLabelDebug must report a counts.hidden field"
+        )
+
+    def test_component_cleans_up_label_debug_on_unmount(self):
+        """Prompt 35.3: the debug helper must be removed on
+        unmount so a stale reference cannot leak across page
+        navigations in the SPA."""
+        text = self._component_text()
+        assert "delete (window as any).__graphLabelDebug" in text, (
+            "GraphExplorer must delete window.__graphLabelDebug in onBeforeUnmount"
+        )
+
+    def test_component_does_not_let_selected_lose_label(self):
+        """Prompt 35.3 regression: the stylesheet's
+        ``node:selected`` rule must explicitly re-assert
+        ``label: 'data(label)'`` so that an inherited
+        ``label: ''`` from the base rule cannot override the
+        selected node's label."""
+        text = self._component_text()
+        # Find the `node:selected` block and confirm it sets
+        # `label: 'data(label)'` (or the double-quoted variant).
+        m = re.search(
+            r"selector:\s*['\"]node:selected['\"][^}]*?label:\s*['\"]data\(label\)['\"]",
+            text,
+            re.DOTALL,
+        )
+        assert m, (
+            "node:selected rule must re-assert label: 'data(label)' "
+            "so a selected node always shows its label"
+        )
+
+    def test_component_hovered_rule_reasserts_label(self):
+        """Prompt 35.3: the ``.hovered`` / ``node.hovered``
+        rule must re-assert ``label: 'data(label)'`` so the
+        hovered node's label is never overridden by an
+        inherited empty label."""
+        text = self._component_text()
+        m = re.search(
+            r"selector:\s*['\"][^'\"]*hovered[^'\"]*['\"][^}]*?label:\s*['\"]data\(label\)['\"]",
+            text,
+            re.DOTALL,
+        )
+        assert m, (
+            ".hovered / node.hovered rule must re-assert label: 'data(label)' "
+            "so the hovered node's label stays visible"
+        )
+
+
+# -----------------------------------------------------------------------------
+# Test class 6: TestSmokeAndValidate
 # -----------------------------------------------------------------------------
 
 
@@ -548,7 +1225,7 @@ class TestSmokeAndValidate:
         # expected_pages adds the viewer entry
         assert '("Graph viewer", site_dir / "graph" / "viewer.md")' in source
         # The four required UI strings are checked
-        assert "public/graph/knowledge_graph.json" in source
+        assert "graph/knowledge_graph.json" in source
         assert '<div id="graph-viewer">' in source
         assert 'id="graph-search"' in source
         assert 'id="graph-node-list"' in source
@@ -580,7 +1257,7 @@ class TestSmokeAndValidate:
         # And the prompt-25-added 'Could not reference' check
         # string appears.
         assert (
-            "does not reference /public/graph/knowledge_graph.json" in source
+            "does not reference /graph/knowledge_graph.json" in source
         )
 
     def test_smoke_site_passes_after_viewer_added(
@@ -718,7 +1395,7 @@ class TestSmokeAndValidate:
 
 
 # -----------------------------------------------------------------------------
-# Test class 6: TestGraphViewerErrorHandling
+# Test class 7: TestGraphViewerErrorHandling
 # -----------------------------------------------------------------------------
 
 
@@ -735,7 +1412,7 @@ class TestGraphViewerErrorHandling:
         # The JS uses import.meta.env.BASE_URL (mirrors the explorer).
         assert "import.meta.env.BASE_URL" in content
         # And the path it appends is the canonical knowledge graph path.
-        assert "public/graph/knowledge_graph.json" in content
+        assert "graph/knowledge_graph.json" in content
 
     def test_viewer_page_has_noscript_fallback(self, tmp_path, monkeypatch):
         template_path = (

@@ -161,22 +161,38 @@ class TestExplorerFallback:
         assert "Test Resource" in html
 
     def test_explorer_has_noscript_message(self):
+        # Prompt 36: the <noscript> block has been removed. The
+        # Vue <SearchExplorer /> component is wrapped in
+        # <ClientOnly> which handles SSR/no-JS gracefully, and
+        # the static Markdown table below is the no-JS fallback.
         items = []
         html = search_index_generator._explorer(items)
-        assert "<noscript>" in html
-        assert "JavaScript is disabled" in html
+        assert "<ClientOnly>" in html
+        assert "<SearchExplorer" in html
 
     def test_explorer_has_js_error_catch(self):
+        # Prompt 36: the JS error fallback is now provided by the
+        # Vue component (and surfaced in the static Markdown as
+        # a description), not as an inline ``initExplorer`` script.
         items = []
         html = search_index_generator._explorer(items)
-        assert "initExplorer" in html
-        assert "Could not load search index. Check /search/all.json." in html
+        assert "Could not load search index" in html
+        assert "/search/all.json" in html
 
     def test_explorer_uses_search_all_json_fetch_path(self):
         html = search_index_generator._explorer([])
+        # The Markdown no longer inlines a ``const items =`` JS
+        # array, and it does not embed a ``fetch(`` call
+        # directly. The Vue component is responsible for that.
         assert "search/all.json" in html
         assert "public/search" not in html
         assert "const items =" not in html
+        # And the Markdown does not contain any raw ``<script>``
+        # side-effect tag (VitePress strips them with a warning).
+        assert "<script>" not in html
+        assert "<style>" not in html
+        # The Vue component mount is present.
+        assert "<SearchExplorer" in html
 
     def test_explorer_empty_items_has_no_items_row(self):
         items = []
@@ -249,6 +265,7 @@ class TestValidateBlankness:
 
     def test_validate_warns_on_tiny_page(self, tmp_path, monkeypatch):
         monkeypatch.setattr(config, "LLM_WIKI_DATA_DIR", tmp_path)
+        monkeypatch.setattr(site_builder, "repo_site_dir", tmp_path / "repo_docs")
         reg = Registry()
         monkeypatch.setattr(cli, "registry", reg)
         explorer_dir = site_builder.repo_site_dir / "explorer"

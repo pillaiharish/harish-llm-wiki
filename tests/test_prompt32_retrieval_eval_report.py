@@ -585,33 +585,43 @@ class TestPrompt32Boundaries:
             )
 
     def test_no_prompt33_context_pack_in_builder(self):
+        """Prompt 34 has landed: the site builder may now render context/RAG pages.
+
+        This guard now checks that the builder still does not call real
+        model/provider integrations while generating static Prompt 34 pages.
+        """
         builder_text = _read_text(REPO_ROOT / "wiki" / "site" / "builder.py")
         for needle in (
-            "ContextPack",
-            "context_pack",
-            "context-pack",
-            "PromptBuilder",
-            "prompt_builder",
-            "GroundedAnswer",
-            "grounded_answer",
+            "OpenAICompatibleProvider",
+            "OllamaLocalProvider",
+            "OllamaCloudProvider",
+            "ask_llm",
+            "chat.completions",
+            "client.chat",
         ):
             assert needle not in builder_text, (
-                f"Prompt 33 boundary violation: {needle!r} found in builder"
+                f"provider/runtime boundary violation: {needle!r} found in builder"
             )
 
     def test_no_answer_generation_in_builder(self):
+        """Prompt 34 allows deterministic mock/no-LLM answer pages only.
+
+        Text explaining that real answer generation is out of scope is allowed.
+        Runtime LLM/provider symbols are still forbidden.
+        """
         builder_text = _read_text(REPO_ROOT / "wiki" / "site" / "builder.py")
         for needle in (
-            "answer generation",
-            "generate_answer",
-            "ask_llm",
+            "generate_answer(",
+            "ask_llm(",
             "MockProvider",
             "OllamaLocalProvider",
             "OllamaCloudProvider",
             "OpenAICompatibleProvider",
+            "chat.completions",
+            "client.chat",
         ):
             assert needle not in builder_text, (
-                f"answer-generation boundary violation: {needle!r} in builder"
+                f"answer-generation runtime boundary violation: {needle!r} in builder"
             )
 
     def test_no_provider_package_added(self):

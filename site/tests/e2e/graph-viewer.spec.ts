@@ -1,0 +1,1179 @@
+import { test, expect, request, Page } from '@playwright/test'
+
+/**
+ * Graph viewer browser tests.
+ *
+ * These tests verify the static knowledge graph viewer is
+ * reachable, has the right title, successfully loads the
+ * graph JSON, and exposes a real interactive Cytoscape.js
+ * explorer with the controls required by Prompt 35.
+ *
+ * The tests run against the VitePress dev server (port 5173)
+ * configured in playwright.config.ts.
+ */
+
+test('/graph page loads', async ({ page }) => {
+  const response = await page.goto('/graph/', { waitUntil: 'domcontentloaded' })
+  expect(response, 'no response for /graph/').not.toBeNull()
+  const status = response?.status() ?? 0
+  expect(status, `/graph/ returned ${status}`).toBeLessThan(400)
+  await expect(page.getByRole('heading', { name: 'Knowledge Graph', level: 1 })).toBeVisible()
+})
+
+test('/graph/viewer page loads and contains the viewer title', async ({ page }) => {
+  const response = await page.goto('/graph/viewer', { waitUntil: 'domcontentloaded' })
+  expect(response, 'no response for /graph/viewer').not.toBeNull()
+  const status = response?.status() ?? 0
+  expect(status, `/graph/viewer returned ${status}`).toBeLessThan(400)
+  await expect(
+    page.getByRole('heading', { name: 'Knowledge Graph Viewer', level: 1 })
+  ).toBeVisible()
+})
+
+test('/graph/viewer loads graph data and shows live stats', async ({ page }) => {
+  await page.goto('/graph/viewer', { waitUntil: 'domcontentloaded' })
+  // The interactive viewer container is present in the static HTML.
+  await expect(page.locator('#graph-viewer')).toBeVisible()
+  // Wait for the live stats panel to flip out of the "loading" state.
+  // Once the JSON fetch completes, the panel data-state becomes
+  // "ready" and the line text reports node and edge counts.
+  const liveStats = page.locator('#graph-live-stats')
+  await expect(liveStats).toBeVisible()
+  await expect(liveStats).toHaveAttribute('data-state', 'ready', { timeout: 15_000 })
+  const lineText = await page.locator('#graph-live-stats-line').innerText()
+  // The line must mention both nodes and edges with numeric counts.
+  expect(lineText).toMatch(/nodes/i)
+  expect(lineText).toMatch(/edges/i)
+  expect(lineText).toMatch(/\d+/)
+  // The static stats table at the top of the page (rendered from
+  // the template) must also be present.
+  const mainText = await page.locator('main').innerText()
+  expect(mainText).toMatch(/Nodes:\s*\d+/)
+  expect(mainText).toMatch(/Edges:\s*\d+/)
+})
+
+test('/graph/knowledge_graph.json returns a healthy response', async () => {
+  const ctx = await request.newContext({ baseURL: 'http://127.0.0.1:5173' })
+  const response = await ctx.get('/graph/knowledge_graph.json')
+  expect(response.status(), `unexpected status: ${response.status()}`).toBeLessThan(400)
+  const body = await response.json()
+  expect(Array.isArray(body.nodes)).toBe(true)
+  expect(Array.isArray(body.edges)).toBe(true)
+  expect(typeof body.stats).toBe('object')
+  expect(body.nodes.length).toBeGreaterThan(0)
+  expect(body.edges.length).toBeGreaterThan(0)
+  await ctx.dispose()
+})
+
+/**
+ * Helper: navigate to the viewer and wait for the Cytoscape
+ * instance to be exposed on window.__graphCy.
+ */
+async function gotoViewerWithCy(page: Page) {
+  await page.goto('/graph/viewer', { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(
+    () => {
+      const cy = (window as any).__graphCy
+      return (
+        cy &&
+        typeof cy.nodes === 'function' &&
+        typeof cy.edges === 'function' &&
+        cy.nodes().length > 0
+      )
+    },
+    null,
+    { timeout: 30_000 }
+  )
+}
+
+test('graph canvas is visible with required height', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  const canvas = page.locator('#graph-canvas')
+  await expect(canvas).toBeVisible()
+  const box = await canvas.boundingBox()
+  expect(box, 'graph canvas has no bounding box').not.toBeNull()
+  expect(box!.width, 'graph canvas width is zero').toBeGreaterThan(0)
+  expect(box!.height, `graph canvas height is ${box!.height}, expected >= 600`).toBeGreaterThanOrEqual(600)
+})
+
+test('cytoscape renders nodes and edges', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  const counts = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    return { nodes: cy.nodes().length, edges: cy.edges().length }
+  })
+  expect(counts.nodes, 'cy.nodes() must be > 0').toBeGreaterThan(0)
+  expect(counts.edges, 'cy.edges() must be > 0').toBeGreaterThan(0)
+})
+
+test('Fit graph button exists and works', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  const fitBtn = page.locator('#graph-fit')
+  await expect(fitBtn).toBeVisible()
+  // Mutate the zoom level so we can detect that fit() ran.
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(0.1)
+    cy.pan({ x: 9999, y: 9999 })
+  })
+  const beforeFit = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    return { zoom: cy.zoom(), pan: cy.pan() }
+  })
+  expect(beforeFit.zoom).toBeLessThan(0.5)
+  await fitBtn.click()
+  // Give Cytoscape a moment to refit.
+  await page.waitForTimeout(500)
+  const afterFit = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    return { zoom: cy.zoom(), pan: cy.pan() }
+  })
+  expect(afterFit.zoom, 'fit should restore zoom to >= 0.5').toBeGreaterThanOrEqual(0.5)
+})
+
+test('Reset zoom button exists and works', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  const resetBtn = page.locator('#graph-reset-zoom')
+  await expect(resetBtn).toBeVisible()
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(2.5)
+  })
+  await resetBtn.click()
+  await page.waitForTimeout(200)
+  const zoom = await page.evaluate(() => (window as any).__graphCy.zoom())
+  expect(zoom, `reset zoom should set zoom to 1, got ${zoom}`).toBeCloseTo(1, 1)
+})
+
+test('Show all button expands from top-N to full graph', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  const before = await page.evaluate(() => (window as any).__graphCy.nodes().length)
+  const showAllBtn = page.locator('#graph-show-all')
+  await expect(showAllBtn).toBeVisible()
+  await showAllBtn.click()
+  // Wait for re-render to complete.
+  await page.waitForFunction(
+    (prev) => (window as any).__graphCy.nodes().length !== prev,
+    before,
+    { timeout: 15_000 }
+  )
+  const after = await page.evaluate(() => (window as any).__graphCy.nodes().length)
+  expect(after, `Show all should expand node count from ${before} to > ${before}`).toBeGreaterThan(before)
+})
+
+test('Search input filters graph content', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  // Find a unique label from the loaded graph.
+  const targetLabel = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    const node = cy.nodes()[0]
+    return node.data('label') || node.id()
+  })
+  const search = page.locator('#graph-search')
+  await expect(search).toBeVisible()
+  await search.fill(targetLabel)
+  // Wait for re-render.
+  await page.waitForTimeout(500)
+  const visibleCount = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    return cy.nodes().filter((n: any) => n.visible()).length
+  })
+  expect(visibleCount).toBeGreaterThan(0)
+  // And no node visible that doesn't match the term.
+  const allMatch = await page.evaluate((term: string) => {
+    const cy = (window as any).__graphCy
+    const lower = term.toLowerCase()
+    return cy
+      .nodes()
+      .filter((n: any) => n.visible())
+      .every((n: any) => {
+        const d = n.data()
+        return (
+          (d.label && d.label.toLowerCase().includes(lower)) ||
+          (d.id && d.id.toLowerCase().includes(lower)) ||
+          (d.slug && d.slug.toLowerCase().includes(lower))
+        )
+      })
+  }, targetLabel)
+  expect(allMatch, 'all visible nodes should match search term').toBe(true)
+})
+
+test('Clicking a node populates Details', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  // Get a node id from the cytoscape instance and click it.
+  const nodeId = await page.evaluate(() => (window as any).__graphCy.nodes()[0].id())
+  await page.evaluate((id: string) => {
+    const cy = (window as any).__graphCy
+    cy.getElementById(id).emit('tap')
+  }, nodeId)
+  await page.waitForTimeout(200)
+  const detailsText = await page.locator('#graph-details').innerText()
+  expect(detailsText).toContain(nodeId)
+  expect(detailsText).toMatch(/Type:/i)
+})
+
+test('Clicking an edge populates Details', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  const hasEdge = await page.evaluate(() => (window as any).__graphCy.edges().length > 0)
+  expect(hasEdge, 'expected at least one edge').toBe(true)
+  const edgeId = await page.evaluate(() => (window as any).__graphCy.edges()[0].id())
+  await page.evaluate((id: string) => {
+    const cy = (window as any).__graphCy
+    cy.getElementById(id).emit('tap')
+  }, edgeId)
+  await page.waitForTimeout(200)
+  const detailsText = await page.locator('#graph-details').innerText()
+  expect(detailsText).toContain(edgeId)
+})
+
+test('Node type filter checkboxes are present', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  const fieldset = page.locator('#graph-filter-node-type')
+  await expect(fieldset).toBeVisible()
+  const checkboxes = fieldset.locator('input[type="checkbox"]')
+  expect(await checkboxes.count()).toBeGreaterThan(0)
+})
+
+test('Edge type filter checkboxes are present', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  const fieldset = page.locator('#graph-filter-edge-type')
+  await expect(fieldset).toBeVisible()
+  const checkboxes = fieldset.locator('input[type="checkbox"]')
+  expect(await checkboxes.count()).toBeGreaterThan(0)
+})
+
+test('Unchecking a node type filter removes matching nodes', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  // Find a type present in the graph.
+  const firstType = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    return cy.nodes()[0].data('type') as string
+  })
+  const cbId = `#graph-filter-node-type-${firstType}`
+  const cb = page.locator(cbId)
+  await expect(cb).toBeVisible()
+  const beforeCount = await page.evaluate(
+    (t: string) => (window as any).__graphCy.nodes().filter(`[type = "${t}"]`).length,
+    firstType
+  )
+  expect(beforeCount).toBeGreaterThan(0)
+  await cb.click()
+  await page.waitForTimeout(300)
+  const afterCount = await page.evaluate(
+    (t: string) => (window as any).__graphCy.nodes().filter(`[type = "${t}"]`).length,
+    firstType
+  )
+  expect(afterCount, 'unchecking a node type should remove those nodes').toBe(0)
+  // Restore for any subsequent tests that share state.
+  await cb.click()
+})
+
+test('Unchecking an edge type filter removes matching edges', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  const firstType = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    const e = cy.edges()[0]
+    return e ? (e.data('type') as string) : ''
+  })
+  expect(firstType, 'expected at least one edge type').not.toBe('')
+  const cbId = `#graph-filter-edge-type-${firstType}`
+  const cb = page.locator(cbId)
+  await expect(cb).toBeVisible()
+  const beforeCount = await page.evaluate(
+    (t: string) => (window as any).__graphCy.edges().filter(`[type = "${t}"]`).length,
+    firstType
+  )
+  expect(beforeCount).toBeGreaterThan(0)
+  await cb.click()
+  await page.waitForTimeout(300)
+  const afterCount = await page.evaluate(
+    (t: string) => (window as any).__graphCy.edges().filter(`[type = "${t}"]`).length,
+    firstType
+  )
+  expect(afterCount, 'unchecking an edge type should remove those edges').toBe(0)
+  await cb.click()
+})
+
+test('No raw HTML is visible as literal text on the page', async ({ page }) => {
+  await page.goto('/graph/viewer', { waitUntil: 'domcontentloaded' })
+  // Wait for hydration to ensure Vue's render has replaced the SSR
+  // placeholders.
+  await page.waitForFunction(
+    () => !!document.querySelector('#graph-canvas'),
+    null,
+    { timeout: 15_000 }
+  )
+  const mainText = await page.locator('main').innerText()
+  expect(mainText).not.toMatch(/<div id="graph-svg-pane"/i)
+  expect(mainText).not.toMatch(/&lt;div id="graph-svg-pane"/i)
+  expect(mainText).not.toMatch(/<pre><code>&lt;div/i)
+})
+
+test('Live stats text matches runtime JSON counts', async ({ page }) => {
+  await page.goto('/graph/viewer', { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(
+    () => {
+      const ls = document.getElementById('graph-live-stats')
+      return ls && ls.getAttribute('data-state') === 'ready'
+    },
+    null,
+    { timeout: 15_000 }
+  )
+  // Fetch the JSON directly to compare numbers.
+  const ctx = await request.newContext({ baseURL: 'http://127.0.0.1:5173' })
+  const resp = await ctx.get('/graph/knowledge_graph.json')
+  const body = await resp.json()
+  await ctx.dispose()
+  const expectedNodeCount: number = body.stats?.node_count ?? body.nodes.length
+  const expectedEdgeCount: number = body.stats?.edge_count ?? body.edges.length
+  const lineText = await page.locator('#graph-live-stats-line').innerText()
+  expect(lineText).toContain(String(expectedNodeCount))
+  expect(lineText).toContain(String(expectedEdgeCount))
+})
+
+// ---------------------------------------------------------------------------
+// Prompt 35.1 — Resize, fit, and label readability
+// ---------------------------------------------------------------------------
+
+test('Zoom in button increases cytoscape zoom level', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  const zoomInBtn = page.locator('#graph-zoom-in')
+  await expect(zoomInBtn).toBeVisible()
+  // Reset to a known zoom first.
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(1)
+  })
+  const before = await page.evaluate(() => (window as any).__graphCy.zoom())
+  await zoomInBtn.click()
+  await page.waitForTimeout(150)
+  const after = await page.evaluate(() => (window as any).__graphCy.zoom())
+  expect(after, 'zoom in should increase zoom level').toBeGreaterThan(before)
+})
+
+test('Zoom out button decreases cytoscape zoom level', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  const zoomOutBtn = page.locator('#graph-zoom-out')
+  await expect(zoomOutBtn).toBeVisible()
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(1.5)
+  })
+  const before = await page.evaluate(() => (window as any).__graphCy.zoom())
+  await zoomOutBtn.click()
+  await page.waitForTimeout(150)
+  const after = await page.evaluate(() => (window as any).__graphCy.zoom())
+  expect(after, 'zoom out should decrease zoom level').toBeLessThan(before)
+})
+
+test('Resizing the viewport keeps the graph visible and refits it', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await gotoViewerWithCy(page)
+  const initial = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    return { zoom: cy.zoom(), pan: cy.pan() }
+  })
+  // Shrink the viewport dramatically.
+  await page.setViewportSize({ width: 800, height: 600 })
+  // ResizeObserver + fit is debounced 80ms, allow a bit more.
+  await page.waitForTimeout(400)
+  const after = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    return {
+      zoom: cy.zoom(),
+      pan: cy.pan(),
+      extents: cy.extent(),
+    }
+  })
+  // The canvas must still hold the graph after resize.
+  const canvasBox = await page.locator('#graph-canvas').boundingBox()
+  expect(canvasBox, 'canvas should still have a bounding box').not.toBeNull()
+  expect(canvasBox!.width, 'canvas width should remain > 0').toBeGreaterThan(0)
+  // The graph extent must still fit within the canvas dimensions.
+  const ext = after.extents
+  expect(ext.w, 'graph width should still be > 0 after resize').toBeGreaterThan(0)
+  expect(ext.h, 'graph height should still be > 0 after resize').toBeGreaterThan(0)
+  // Sanity: zoom should still be a finite, positive number.
+  expect(after.zoom).toBeGreaterThan(0)
+  // Restore viewport for downstream tests.
+  await page.setViewportSize({ width: 1280, height: 900 })
+  // The pan/zoom may legitimately change because the canvas
+  // shrank. What matters is that the graph is still visible.
+  void initial
+})
+
+test('Mouse-wheel zoom is not auto-fit back to a default', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  // Set a non-default zoom manually, then dispatch a real wheel
+  // event on the canvas via a dispatched WheelEvent. The graph
+  // should keep the new zoom level.
+  const targetZoom = 2.2
+  await page.evaluate((z: number) => {
+    const cy = (window as any).__graphCy
+    cy.zoom(z)
+  }, targetZoom)
+  const before = await page.evaluate(() => (window as any).__graphCy.zoom())
+  expect(before).toBeCloseTo(targetZoom, 1)
+  // Dispatch several WheelEvents directly on the canvas container.
+  // Playwright's page.mouse.wheel can be flaky in headless mode
+  // against cytoscape's wheel listener; a real DOM event with
+  // deltaY is more reliable.
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    const container = cy.container()
+    if (!container) return
+    const rect = container.getBoundingClientRect()
+    const clientX = rect.left + rect.width / 2
+    const clientY = rect.top + rect.height / 2
+    for (let i = 0; i < 8; i += 1) {
+      const ev = new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        clientX,
+        clientY,
+        deltaY: -200,
+        deltaMode: 0,
+      })
+      container.dispatchEvent(ev)
+    }
+  })
+  await page.waitForTimeout(300)
+  const after = await page.evaluate(() => (window as any).__graphCy.zoom())
+  // The wheel events should have increased the zoom above the
+  // initial value.
+  expect(
+    after,
+    `wheel zoom should increase zoom (before=${before}, after=${after})`
+  ).toBeGreaterThan(before + 0.05)
+  // And the auto-fit handler must not have snapped it back to 1.
+  expect(after, 'wheel zoom must not snap back to 1').not.toBeCloseTo(1, 1)
+})
+
+test('Most labels are hidden at low zoom', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  // Force a low zoom and emit a zoom event so the label
+  // visibility handler runs. cy.zoom() does not trigger the
+  // 'zoom' event on its own, so we emit it explicitly.
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(0.25)
+    cy.emit('zoom')
+  })
+  await page.waitForTimeout(250)
+  // Count nodes that currently have a non-empty label string.
+  const visibleLabels = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    let count = 0
+    cy.nodes().forEach((n: any) => {
+      const lbl = n.style('label') || ''
+      if (lbl && lbl.length > 0) count += 1
+    })
+    return { count, total: cy.nodes().length }
+  })
+  expect(visibleLabels.total, 'graph should have many nodes').toBeGreaterThan(10)
+  // At low zoom, only a small fraction of nodes should display labels.
+  // The Prompt 35.1 spec says "most labels are hidden when zoom is low"
+  // and only the selected node, its neighbors, and high-degree hubs
+  // (degree >= 8) should still be visible.
+  expect(
+    visibleLabels.count,
+    `low zoom should hide most labels, got ${visibleLabels.count} of ${visibleLabels.total}`
+  ).toBeLessThan(visibleLabels.total / 2)
+})
+
+test('Selected node still shows details and keeps its label visible', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  // Pick a node with at least one neighbor so the closed
+  // neighborhood is non-trivial.
+  const targetId = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    const ns = cy.nodes()
+    for (let i = 0; i < ns.length; i++) {
+      const n = ns[i]
+      if (n.neighborhood().length > 0) {
+        return n.id() as string
+      }
+    }
+    return ns[0].id() as string
+  })
+  // Emit a tap on that node and wait for the label refresh.
+  await page.evaluate((id: string) => {
+    const cy = (window as any).__graphCy
+    cy.getElementById(id).emit('tap')
+  }, targetId)
+  await page.waitForTimeout(250)
+  // The selected node should have a non-empty label string.
+  const label = await page.evaluate((id: string) => {
+    const cy = (window as any).__graphCy
+    const n = cy.getElementById(id)
+    return n.style('label') as string
+  }, targetId)
+  expect(label, 'selected node must have a visible label').toBeTruthy()
+  expect(label.length, 'selected node label must be non-empty').toBeGreaterThan(0)
+  // The details panel must mention the node id and type.
+  const detailsText = await page.locator('#graph-details').innerText()
+  expect(detailsText).toContain(targetId)
+  expect(detailsText).toMatch(/Type:/i)
+})
+
+test('Reset zoom button returns zoom to 1×', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  const resetBtn = page.locator('#graph-reset-zoom')
+  await expect(resetBtn).toBeVisible()
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(2.5)
+  })
+  await resetBtn.click()
+  await page.waitForTimeout(200)
+  const zoom = await page.evaluate(() => (window as any).__graphCy.zoom())
+  expect(zoom, `reset zoom should restore zoom to 1, got ${zoom}`).toBeCloseTo(1, 1)
+})
+
+test('Fit graph button restores a usable zoom after manual pan/zoom', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  const fitBtn = page.locator('#graph-fit')
+  await expect(fitBtn).toBeVisible()
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(0.1)
+    cy.pan({ x: 9999, y: 9999 })
+  })
+  await fitBtn.click()
+  await page.waitForTimeout(400)
+  const after = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    return { zoom: cy.zoom(), pan: cy.pan() }
+  })
+  expect(after.zoom, 'fit should restore zoom to >= 0.3').toBeGreaterThanOrEqual(0.3)
+})
+
+// ---------------------------------------------------------------------------
+// Prompt 35.2 — Semantic zoom and graph spacing
+// ---------------------------------------------------------------------------
+
+/**
+ * Helper: collect how many nodes have a non-empty label at the
+ * current cy state, and a few representative style values.
+ */
+async function readLabelState(page: Page) {
+  return page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    let shown = 0
+    let hubShown = 0
+    let totalNodes = 0
+    let nonHubCount = 0
+    let widthSamples: string[] = []
+    let fontSizeSamples: string[] = []
+    cy.nodes().forEach((n: any) => {
+      totalNodes += 1
+      const lbl = n.style('label') || ''
+      if (lbl && lbl.length > 0) {
+        shown += 1
+        if (n.hasClass('hub')) hubShown += 1
+      }
+      // The base `node` style has no per-type width, so read any
+      // element's width (we collect a few to be robust against
+      // missing style on the first element).
+      widthSamples.push(String(n.style('width')))
+      fontSizeSamples.push(String(n.style('font-size')))
+      if (!n.hasClass('hub')) nonHubCount += 1
+    })
+    // Pick the first non-empty width / font-size across all
+    // elements. The base `node` rule is shared so this is
+    // representative of the tier defaults.
+    const width = widthSamples.find((s) => s && s !== 'undefined' && s !== 'NaN') || ''
+    const fontSize = fontSizeSamples.find((s) => s && s !== 'undefined' && s !== 'NaN') || ''
+    return {
+      total: totalNodes,
+      shown,
+      hubShown,
+      nonHubCount,
+      fontSize,
+      width,
+      zoom: cy.zoom(),
+    }
+  })
+}
+
+test('Semantic zoom: low zoom hides most labels and shrinks nodes', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  // Low tier is z <= 0.5.
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(0.25)
+    cy.emit('zoom')
+  })
+  await page.waitForTimeout(250)
+  const state = await readLabelState(page)
+  expect(state.zoom, 'zoom should be at 0.25').toBeLessThanOrEqual(0.5)
+  expect(state.total, 'graph should have many nodes').toBeGreaterThan(10)
+  // At low zoom, less than half of nodes should show a label.
+  expect(
+    state.shown,
+    `low zoom should hide most labels, got ${state.shown} of ${state.total}`
+  ).toBeLessThan(state.total / 2)
+  // Node width should be in the small "low zoom" range (10-12 px).
+  const w = parseFloat(state.width)
+  expect(w, `low zoom node width should be <= 13, got ${w}`).toBeLessThanOrEqual(13)
+  expect(w, `low zoom node width should be > 0, got ${w}`).toBeGreaterThan(0)
+})
+
+test('Semantic zoom: high zoom reveals more labels and grows nodes', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  // High tier is z >= 1.2.
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(2.0)
+    cy.emit('zoom')
+  })
+  await page.waitForTimeout(250)
+  const state = await readLabelState(page)
+  expect(state.zoom, 'zoom should be at 2.0').toBeGreaterThanOrEqual(1.2)
+  // At high zoom, every node should display its label.
+  expect(
+    state.shown,
+    `high zoom should reveal all ${state.total} labels, got ${state.shown}`
+  ).toBe(state.total)
+  // Node width should be in the larger "high zoom" range (>= 22 px).
+  const w = parseFloat(state.width)
+  expect(w, `high zoom node width should be >= 22, got ${w}`).toBeGreaterThanOrEqual(22)
+  // Font-size is controlled — even at zoom 2.0, it should be in
+  // the 7-10 px band, not scaled endlessly.
+  const fs = parseFloat(state.fontSize)
+  expect(fs, `high zoom font-size should be <= 11, got ${fs}`).toBeLessThanOrEqual(11)
+  expect(fs, `high zoom font-size should be > 0, got ${fs}`).toBeGreaterThan(0)
+})
+
+test('Semantic zoom: medium zoom keeps selected and neighbor labels visible', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  // Settle at medium zoom (0.7 is squarely in [0.5, 1.2)).
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(0.7)
+    cy.emit('zoom')
+  })
+  await page.waitForTimeout(150)
+  // Pick a node that has at least one neighbor, then tap it.
+  const targetId = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    for (let i = 0; i < cy.nodes().length; i++) {
+      const n = cy.nodes()[i]
+      if (n.neighborhood().length > 0) return n.id() as string
+    }
+    return cy.nodes()[0].id() as string
+  })
+  await page.evaluate((id: string) => {
+    const cy = (window as any).__graphCy
+    cy.getElementById(id).emit('tap')
+  }, targetId)
+  await page.waitForTimeout(250)
+  // The selected node and at least one of its neighbors must show a
+  // label, even though most other nodes are hidden at medium zoom.
+  const stats = await page.evaluate((id: string) => {
+    const cy = (window as any).__graphCy
+    const sel = cy.getElementById(id)
+    const selLabel = sel.style('label') as string
+    const nbh = sel.closedNeighborhood()
+    let neighborShown = 0
+    nbh.forEach((n: any) => {
+      const lbl = n.style('label') || ''
+      if (lbl && lbl.length > 0) neighborShown += 1
+    })
+    return { selLabel, neighborShown, totalNb: nbh.length }
+  }, targetId)
+  expect(stats.selLabel, 'selected node label must be non-empty').toBeTruthy()
+  expect(stats.selLabel.length, 'selected node label must be non-empty').toBeGreaterThan(0)
+  expect(
+    stats.neighborShown,
+    `at least one neighbor of the selected node should show a label, got ${stats.neighborShown} of ${stats.totalNb}`
+  ).toBeGreaterThan(0)
+})
+
+test('Semantic zoom: low zoom keeps the selected node label visible', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  // Pick a node first, then zoom out.
+  const targetId = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    for (let i = 0; i < cy.nodes().length; i++) {
+      const n = cy.nodes()[i]
+      if (n.neighborhood().length > 0) return n.id() as string
+    }
+    return cy.nodes()[0].id() as string
+  })
+  await page.evaluate((id: string) => {
+    const cy = (window as any).__graphCy
+    cy.getElementById(id).emit('tap')
+  }, targetId)
+  // Now drop the zoom to 0.25 and emit the event.
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(0.25)
+    cy.emit('zoom')
+  })
+  await page.waitForTimeout(250)
+  const label = await page.evaluate((id: string) => {
+    const cy = (window as any).__graphCy
+    return cy.getElementById(id).style('label') as string
+  }, targetId)
+  expect(
+    label,
+    `selected node label must remain visible at low zoom, got ${JSON.stringify(label)}`
+  ).toBeTruthy()
+  expect(label.length, 'selected node label must be non-empty at low zoom').toBeGreaterThan(0)
+})
+
+test('Semantic zoom: zoom in and zoom out buttons change node width and font-size', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  // Start at the lowest tier, then drive the zoom through the
+  // user-facing Zoom in button to verify the tier transition
+  // propagates to node width. (We use cy.zoom() to set a precise
+  // starting point and click Zoom in to reach the next tier.)
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(0.2)
+    cy.emit('zoom')
+  })
+  await page.waitForTimeout(200)
+  const before = await readLabelState(page)
+  expect(before.zoom, 'starting zoom should be in the low tier').toBeLessThanOrEqual(0.5)
+  // Click Zoom in several times. 0.2 * 1.25^4 = 0.488, still low.
+  // 0.2 * 1.25^5 = 0.610, medium. So 5 clicks is enough to
+  // cross the low->medium boundary in *theory*, but the actual
+  // accumulated zoom depends on cytoscape's rounding. Keep
+  // clicking until we observe a tier transition; cap at 12
+  // clicks to avoid an infinite loop.
+  let afterZoomIn = before
+  for (let i = 0; i < 12; i += 1) {
+    await page.locator('#graph-zoom-in').click()
+    await page.waitForTimeout(120)
+    afterZoomIn = await readLabelState(page)
+    if (parseFloat(afterZoomIn.width) > parseFloat(before.width)) {
+      break
+    }
+  }
+  expect(afterZoomIn.zoom, 'zoom in should increase zoom').toBeGreaterThan(before.zoom)
+  const wBefore = parseFloat(before.width)
+  const wAfter = parseFloat(afterZoomIn.width)
+  expect(
+    wAfter,
+    `node width should grow when zooming in (zoom=${afterZoomIn.zoom}, before=${wBefore}, after=${wAfter})`
+  ).toBeGreaterThan(wBefore)
+  // Now click Zoom out several times to drop back into the low
+  // tier.
+  let afterZoomOut = afterZoomIn
+  for (let i = 0; i < 12; i += 1) {
+    await page.locator('#graph-zoom-out').click()
+    await page.waitForTimeout(120)
+    afterZoomOut = await readLabelState(page)
+    if (parseFloat(afterZoomOut.width) < wAfter) {
+      break
+    }
+  }
+  expect(afterZoomOut.zoom, 'zoom out should decrease zoom').toBeLessThan(afterZoomIn.zoom)
+  // The low-zoom node width should be <= 13 (the low tier is 11).
+  const wLow = parseFloat(afterZoomOut.width)
+  expect(
+    wLow,
+    `after zooming out, node width should shrink to <= 13, got ${wLow} at zoom ${afterZoomOut.zoom}`
+  ).toBeLessThanOrEqual(13)
+})
+
+test('Semantic zoom: graph still has rendered nodes and edges at low zoom', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(0.25)
+    cy.emit('zoom')
+  })
+  await page.waitForTimeout(300)
+  const counts = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    return {
+      nodes: cy.nodes().length,
+      edges: cy.edges().length,
+      visibleNodes: cy.nodes().filter((n: any) => n.visible()).length,
+      visibleEdges: cy.edges().filter((e: any) => e.visible()).length,
+    }
+  })
+  expect(counts.nodes, 'cy should still have nodes at low zoom').toBeGreaterThan(0)
+  expect(counts.edges, 'cy should still have edges at low zoom').toBeGreaterThan(0)
+  expect(counts.visibleNodes, 'visible node count at low zoom should be > 0').toBeGreaterThan(0)
+  expect(counts.visibleEdges, 'visible edge count at low zoom should be > 0').toBeGreaterThan(0)
+})
+
+test('Semantic zoom: reset zoom button restores zoom to ~1', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(2.5)
+    cy.emit('zoom')
+  })
+  await page.waitForTimeout(200)
+  await page.locator('#graph-reset-zoom').click()
+  await page.waitForTimeout(300)
+  const zoom = await page.evaluate(() => (window as any).__graphCy.zoom())
+  expect(zoom, `reset zoom should be close to 1, got ${zoom}`).toBeCloseTo(1, 1)
+})
+
+test('Semantic zoom: fit graph button restores a usable zoom', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(0.1)
+    cy.pan({ x: 9999, y: 9999 })
+  })
+  await page.locator('#graph-fit').click()
+  await page.waitForTimeout(500)
+  const after = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    return { zoom: cy.zoom(), pan: cy.pan() }
+  })
+  expect(after.zoom, 'fit should restore zoom to >= 0.3').toBeGreaterThanOrEqual(0.3)
+})
+
+test('Semantic zoom: do not duplicate DOM ids in the graph explorer', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  const dupes = await page.evaluate(() => {
+    const ids: Record<string, number> = {}
+    const all = document.querySelectorAll('#graph-explorer, #graph-explorer *')
+    all.forEach((el) => {
+      const id = el.getAttribute('id')
+      if (!id) return
+      ids[id] = (ids[id] || 0) + 1
+    })
+    return Object.entries(ids)
+      .filter(([, n]) => n > 1)
+      .map(([id, n]) => `${id}×${n}`)
+  })
+  expect(dupes, `found duplicate DOM ids: ${dupes.join(', ')}`).toEqual([])
+})
+
+// ---------------------------------------------------------------------------
+// Prompt 35.3 — Label visibility fix
+// ---------------------------------------------------------------------------
+
+/**
+ * Helper: count nodes with a non-empty label string in the
+ * current cytoscape stylesheet.
+ */
+async function countVisibleLabels(page: Page) {
+  return page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    let shown = 0
+    let total = 0
+    cy.nodes().forEach((n: any) => {
+      total += 1
+      const lbl = n.style('label') || ''
+      if (lbl && lbl.length > 0) shown += 1
+    })
+    return { shown, total }
+  })
+}
+
+test('Prompt 35.3: high zoom reveals labels for every node', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(2.0)
+    cy.emit('zoom')
+  })
+  await page.waitForTimeout(300)
+  const counts = await countVisibleLabels(page)
+  expect(counts.total, 'graph should have many nodes').toBeGreaterThan(10)
+  expect(
+    counts.shown,
+    `high zoom should reveal labels for all ${counts.total} nodes, got ${counts.shown}`
+  ).toBe(counts.total)
+})
+
+test('Prompt 35.3: high zoom shows more labels than low zoom', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  // Low zoom
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(0.25)
+    cy.emit('zoom')
+  })
+  await page.waitForTimeout(250)
+  const low = await countVisibleLabels(page)
+  // High zoom
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(2.0)
+    cy.emit('zoom')
+  })
+  await page.waitForTimeout(250)
+  const high = await countVisibleLabels(page)
+  expect(
+    high.shown,
+    `high zoom should show more labels than low zoom (low=${low.shown}, high=${high.shown})`
+  ).toBeGreaterThan(low.shown)
+})
+
+test('Prompt 35.3: selected node label is visible at every zoom tier', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  const targetId = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    for (let i = 0; i < cy.nodes().length; i++) {
+      const n = cy.nodes()[i]
+      if (n.neighborhood().length > 0) return n.id() as string
+    }
+    return cy.nodes()[0].id() as string
+  })
+  // Tap the node first.
+  await page.evaluate((id: string) => {
+    const cy = (window as any).__graphCy
+    cy.getElementById(id).emit('tap')
+  }, targetId)
+  for (const z of [0.25, 0.7, 2.0]) {
+    await page.evaluate((zoom: number) => {
+      const cy = (window as any).__graphCy
+      cy.zoom(zoom)
+      cy.emit('zoom')
+    }, z)
+    await page.waitForTimeout(200)
+    const label = await page.evaluate((id: string) => {
+      const cy = (window as any).__graphCy
+      return cy.getElementById(id).style('label') as string
+    }, targetId)
+    expect(
+      label && label.length > 0,
+      `selected node label must be visible at zoom ${z}, got ${JSON.stringify(label)}`
+    ).toBe(true)
+  }
+})
+
+test('Prompt 35.3: hovered node label is visible at low zoom', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  // Pick a node and simulate a hover via the cytoscape
+  // mouseover event so currentHoverId is set.
+  const targetId = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    for (let i = 0; i < cy.nodes().length; i++) {
+      const n = cy.nodes()[i]
+      if (n.neighborhood().length > 0) return n.id() as string
+    }
+    return cy.nodes()[0].id() as string
+  })
+  // Set low zoom first.
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(0.25)
+    cy.emit('zoom')
+  })
+  await page.waitForTimeout(200)
+  // Emit mouseover on the target node.
+  await page.evaluate((id: string) => {
+    const cy = (window as any).__graphCy
+    cy.getElementById(id).emit('mouseover')
+  }, targetId)
+  await page.waitForTimeout(250)
+  const label = await page.evaluate((id: string) => {
+    const cy = (window as any).__graphCy
+    return cy.getElementById(id).style('label') as string
+  }, targetId)
+  expect(
+    label && label.length > 0,
+    `hovered node label must be visible at low zoom, got ${JSON.stringify(label)}`
+  ).toBe(true)
+})
+
+test('Prompt 35.3: neighbor of selected node shows a label at medium zoom', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(0.7)
+    cy.emit('zoom')
+  })
+  await page.waitForTimeout(150)
+  const targetId = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    for (let i = 0; i < cy.nodes().length; i++) {
+      const n = cy.nodes()[i]
+      if (n.neighborhood().length > 0) return n.id() as string
+    }
+    return cy.nodes()[0].id() as string
+  })
+  await page.evaluate((id: string) => {
+    const cy = (window as any).__graphCy
+    cy.getElementById(id).emit('tap')
+  }, targetId)
+  await page.waitForTimeout(250)
+  const stats = await page.evaluate((id: string) => {
+    const cy = (window as any).__graphCy
+    const sel = cy.getElementById(id)
+    const nbh = sel.closedNeighborhood()
+    let neighborShown = 0
+    const neighborIds: string[] = []
+    nbh.forEach((n: any) => {
+      if (n.id() === id) return // skip self
+      const lbl = n.style('label') || ''
+      if (lbl && lbl.length > 0) {
+        neighborShown += 1
+        neighborIds.push(n.id() as string)
+      }
+    })
+    return { neighborShown, totalNb: nbh.length, neighborIds }
+  }, targetId)
+  expect(
+    stats.neighborShown,
+    `at least one neighbor of the selected node should show a label at medium zoom, got ${stats.neighborShown} of ${stats.totalNb}`
+  ).toBeGreaterThan(0)
+})
+
+test('Prompt 35.3: low zoom still hides most labels', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(0.25)
+    cy.emit('zoom')
+  })
+  await page.waitForTimeout(300)
+  const counts = await countVisibleLabels(page)
+  expect(counts.total, 'graph should have many nodes').toBeGreaterThan(10)
+  expect(
+    counts.shown,
+    `low zoom should hide most labels, got ${counts.shown} of ${counts.total}`
+  ).toBeLessThan(counts.total / 2)
+})
+
+test('Prompt 35.3: window.__graphLabelDebug returns counts, zoom, tier', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(1.5)
+    cy.emit('zoom')
+  })
+  await page.waitForTimeout(250)
+  const snap = await page.evaluate(() => {
+    const fn = (window as any).__graphLabelDebug
+    if (typeof fn !== 'function') return null
+    return fn()
+  })
+  expect(snap, 'window.__graphLabelDebug must be defined').not.toBeNull()
+  expect(snap.ready, 'snapshot should be ready').toBe(true)
+  expect(typeof snap.zoom, 'snapshot.zoom should be a number').toBe('number')
+  expect(typeof snap.tier, 'snapshot.tier should be a string').toBe('string')
+  expect(snap.tier).toBe('high')
+  expect(snap.counts).toBeTruthy()
+  expect(typeof snap.counts.visible).toBe('number')
+  expect(typeof snap.counts.hidden).toBe('number')
+  expect(typeof snap.counts.total).toBe('number')
+  expect(snap.counts.total, 'counts.total should match the node count').toBeGreaterThan(10)
+  expect(
+    snap.counts.visible,
+    `at high zoom, counts.visible should equal counts.total, got ${snap.counts.visible} of ${snap.counts.total}`
+  ).toBe(snap.counts.total)
+})
+
+test('Prompt 35.3: __graphLabelDebug reflects hide-labels at low zoom', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(0.2)
+    cy.emit('zoom')
+  })
+  await page.waitForTimeout(300)
+  const snap = await page.evaluate(() => {
+    const fn = (window as any).__graphLabelDebug
+    return typeof fn === 'function' ? fn() : null
+  })
+  expect(snap, '__graphLabelDebug must be defined').not.toBeNull()
+  expect(snap.tier).toBe('low')
+  expect(
+    snap.counts.hidden,
+    `at low zoom, debug helper should report hidden labels, got ${snap.counts.hidden} of ${snap.counts.total}`
+  ).toBeGreaterThan(0)
+  expect(
+    snap.counts.visible + snap.counts.hidden,
+    'visible + hidden must equal total'
+  ).toBe(snap.counts.total)
+})
+
+test('Prompt 35.3: high zoom label coverage >= low zoom label coverage', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(0.25)
+    cy.emit('zoom')
+  })
+  await page.waitForTimeout(300)
+  const low = await countVisibleLabels(page)
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(2.0)
+    cy.emit('zoom')
+  })
+  await page.waitForTimeout(300)
+  const high = await countVisibleLabels(page)
+  // Prompt 35.3 acceptance: high zoom shows more labels than
+  // low zoom.
+  expect(
+    high.shown - low.shown,
+    `high zoom should expose strictly more labels than low zoom (low=${low.shown}, high=${high.shown})`
+  ).toBeGreaterThan(0)
+})
+
+test('Prompt 35.3: switching from low to high removes hide-labels class from all nodes', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(0.25)
+    cy.emit('zoom')
+  })
+  await page.waitForTimeout(300)
+  const hiddenAtLow = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    let n = 0
+    cy.nodes().forEach((node: any) => {
+      if (node.hasClass('hide-labels')) n += 1
+    })
+    return n
+  })
+  expect(hiddenAtLow, 'low zoom should leave some nodes with hide-labels').toBeGreaterThan(0)
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.zoom(2.0)
+    cy.emit('zoom')
+  })
+  await page.waitForTimeout(300)
+  const hiddenAtHigh = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    let n = 0
+    cy.nodes().forEach((node: any) => {
+      if (node.hasClass('hide-labels')) n += 1
+    })
+    return n
+  })
+  expect(
+    hiddenAtHigh,
+    `high zoom should remove hide-labels from every node, got ${hiddenAtHigh} still hidden`
+  ).toBe(0)
+})
+
+test('Prompt 35.3: no duplicate DOM ids at any time after semantic zoom', async ({ page }) => {
+  await gotoViewerWithCy(page)
+  // Drive several zoom events to flush any duplicate-id regressions.
+  for (const z of [0.25, 0.7, 1.5, 3.0]) {
+    await page.evaluate((zoom: number) => {
+      const cy = (window as any).__graphCy
+      cy.zoom(zoom)
+      cy.emit('zoom')
+    }, z)
+    await page.waitForTimeout(150)
+  }
+  const dupes = await page.evaluate(() => {
+    const ids: Record<string, number> = {}
+    const all = document.querySelectorAll('#graph-explorer, #graph-explorer *')
+    all.forEach((el) => {
+      const id = el.getAttribute('id')
+      if (!id) return
+      ids[id] = (ids[id] || 0) + 1
+    })
+    return Object.entries(ids)
+      .filter(([, n]) => n > 1)
+      .map(([id, n]) => `${id}×${n}`)
+  })
+  expect(dupes, `found duplicate DOM ids: ${dupes.join(', ')}`).toEqual([])
+})

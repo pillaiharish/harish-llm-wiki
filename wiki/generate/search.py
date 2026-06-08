@@ -120,78 +120,52 @@ class SearchIndexGenerator:
         return items
 
     def _explorer(self, items: list[dict[str, Any]]) -> str:
+        normalized = [self._normalize_explorer_item(item) for item in items[:200]]
         rows = "\n".join(
             f"| [{md_table_cell(item['title'])}]({item['local_page']}) | {md_table_cell(item['type'])} | "
             f"{md_table_cell(', '.join(item.get('topics') or []) or '-')} | {md_table_cell(item.get('provider') or '-')} | "
-            f"{md_table_cell(item.get('review_status', '-'))} | {md_table_cell(item.get('stale_status', '-'))} |"
-            for item in items[:200]
+            f"{md_table_cell(item.get('review_status') or '-')} | {md_table_cell(item.get('stale_status') or '-')} |"
+            for item in normalized
         )
+        # Prompt 36: the interactive explorer is a Vue component
+        # (``<SearchExplorer />``) registered globally by the
+        # VitePress theme. We deliberately do NOT embed raw
+        # ``<script>`` or ``<style>`` blocks in this Markdown
+        # file because VitePress/Vue would warn at dev/build
+        # time and strip the side-effect tags.
+        #
+        # The expected shape (per the spec) is:
+        #
+        #   <ClientOnly>
+        #     <SearchExplorer />
+        #   </ClientOnly>
+        #
+        # ``<ClientOnly>`` ensures the component only renders on
+        # the client (it depends on ``fetch`` + ``window``) and
+        # suppresses SSR/hydration mismatches. The ``SearchExplorer``
+        # component itself handles the ``/search/all.json`` fetch
+        # and a deterministic error fallback, so we never emit an
+        # inline ``<script>fetch(...)`` block here.
+        #
+        # We still keep a ``<div id="wiki-explorer">`` wrapper
+        # inside the ClientOnly block so older smoke / validate
+        # checks that look for that marker continue to pass.
         return f"""# Explorer
 
-Search and filter the static wiki without a backend.
+Search and filter the static wiki without a backend. The interactive
+search below loads ``/search/all.json`` via ``fetch`` (inside the
+``<SearchExplorer />`` Vue component) and never makes external
+network calls. The view is fully static and deterministic.
 
-<noscript>
-<p><strong>JavaScript is disabled.</strong> The interactive search below requires JavaScript. Use the static table further down instead.</p>
-</noscript>
+If the search index cannot be loaded, the component surfaces a
+deterministic fallback message: **Could not load search index. Check
+/search/all.json.**
 
-<div id="wiki-explorer">
-  <input id="q" placeholder="Search" />
-  <select id="type"><option value="">All types</option></select>
-  <select id="topic"><option value="">All topics</option></select>
-  <select id="provider"><option value="">All providers</option></select>
-  <select id="review"><option value="">All review states</option></select>
-  <select id="stale"><option value="">All stale states</option></select>
-  <div id="results"><p>Loading...</p></div>
-  <noscript><p>The interactive search requires JavaScript. See the static table below.</p></noscript>
-</div>
-
-<script>
-async function initExplorer() {{
-  let items = [];
-  try {{
-    const base = import.meta.env.BASE_URL || '/';
-    const searchUrl = base.replace(/\\/$/, '/') + 'search/all.json';
-    const response = await fetch(searchUrl);
-    if (!response.ok) throw new Error('Failed to load');
-    const payload = await response.json();
-    items = payload.items || [];
-  }} catch(e) {{
-    document.getElementById('results').innerHTML = '<p>Could not load search index. Check /search/all.json.</p>';
-    return;
-  }}
-  const fields = ['type','provider','review','stale'];
-  function uniq(values) {{ return [...new Set(values.filter(Boolean))].sort(); }}
-  function fill(id, values) {{
-    const el = document.getElementById(id);
-    uniq(values).forEach(v => {{ const o=document.createElement('option'); o.value=v; o.textContent=v; el.appendChild(o); }});
-  }}
-  fill('type', items.map(i => i.type));
-  fill('topic', items.flatMap(i => i.topics || []));
-  fill('provider', items.map(i => i.provider));
-  fill('review', items.map(i => i.review_status));
-  fill('stale', items.map(i => i.stale_status));
-  function render() {{
-    const q = document.getElementById('q').value.toLowerCase();
-    const type = document.getElementById('type').value;
-    const topic = document.getElementById('topic').value;
-    const provider = document.getElementById('provider').value;
-    const review = document.getElementById('review').value;
-    const stale = document.getElementById('stale').value;
-    const filtered = items.filter(i =>
-      (!q || (i.title + ' ' + i.summary).toLowerCase().includes(q)) &&
-      (!type || i.type === type) &&
-      (!topic || (i.topics || []).includes(topic)) &&
-      (!provider || i.provider === provider) &&
-      (!review || i.review_status === review) &&
-      (!stale || i.stale_status === stale)
-    );
-    document.getElementById('results').innerHTML = filtered.slice(0, 100).map(i => `<p><a href="${{i.local_page}}">${{i.title}}</a> <code>${{i.type}}</code></p>`).join('');
-  }}
-  ['q','type','topic','provider','review','stale'].forEach(id => document.getElementById(id).addEventListener('input', render));
-  render();
-}}
-initExplorer();
-</script>
+<ClientOnly>
+  <div id="wiki-explorer">
+    <SearchExplorer />
+  </div>
+</ClientOnly>
 
 ## Resource summary
 
@@ -206,6 +180,78 @@ initExplorer();
 |---|---|---|---|---|---|
 {rows or '| No items | - | - | - | - | - |'}
 """
+
+    @staticmethod
+    def _normalize_explorer_item(item: Any) -> dict[str, Any]:
+        """Normalize a single Explorer item to a known schema.
+
+        Different code paths feed ``_explorer()`` (resource records,
+        concept/topic/learn markdown items, citation items, …) and
+        they can disagree on the exact field names. To keep the
+        generated Markdown stable we coerce every item to a fixed
+        shape. Missing or ``None`` fields fall back to safe defaults
+        so a partial item never raises ``KeyError``.
+        """
+        if not isinstance(item, dict):
+            item = {}
+
+        def _coerce_str(value: Any) -> str:
+            if value is None:
+                return ""
+            return str(value)
+
+        title = (
+            item.get("title")
+            or item.get("name")
+            or item.get("label")
+            or item.get("resource_title")
+            or item.get("text")
+            or item.get("id")
+            or "(untitled)"
+        )
+        item_type = (
+            item.get("type")
+            or item.get("source_type")
+            or item.get("kind")
+            or item.get("category")
+            or item.get("resource")
+            or ""
+        )
+        local_page = (
+            item.get("local_page")
+            or item.get("path")
+            or item.get("href")
+            or item.get("url")
+            or "#"
+        )
+        topics_value = item.get("topics")
+        if topics_value is None:
+            topics_value = item.get("topic")
+        if isinstance(topics_value, str):
+            topics_list: list[str] = [topics_value] if topics_value else []
+        elif isinstance(topics_value, (list, tuple, set)):
+            topics_list = [_coerce_str(t) for t in topics_value if t is not None]
+        else:
+            topics_list = []
+
+        return {
+            "id": _coerce_str(item.get("id")),
+            "title": _coerce_str(title) or "(untitled)",
+            "type": _coerce_str(item_type),
+            "summary": _coerce_str(item.get("summary")),
+            "tags": list(item.get("tags") or []) if isinstance(item.get("tags"), (list, tuple, set)) else [],
+            "topics": topics_list,
+            "source_url": _coerce_str(item.get("source_url")),
+            "local_page": _coerce_str(local_page) or "#",
+            "provider": _coerce_str(item.get("provider")),
+            "model": _coerce_str(item.get("model")),
+            "prompt_version": _coerce_str(item.get("prompt_version")),
+            "requires_human_review": bool(item.get("requires_human_review", False)),
+            "review_status": _coerce_str(item.get("review_status") or "ok"),
+            "stale_status": _coerce_str(item.get("stale_status") or "current"),
+            "created_at": _coerce_str(item.get("created_at")),
+            "updated_at": _coerce_str(item.get("updated_at")),
+        }
 
     def _sources(self, resources: list[dict[str, Any]]) -> str:
         lines = ["# Sources", "", "| Source URL | Resource | Type | Provider/model |", "|---|---|---|---|"]
