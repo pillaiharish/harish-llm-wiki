@@ -13,44 +13,14 @@ grounded LLM answers).
 ## Stats
 
 - Schema version: `chunk_index_v1`
-- Chunks: 147
-- Resources indexed: 23
+- Chunks: 0
+- Resources indexed: 0
 
 ### By source type
 
 | Source type | Chunk count |
 |---|---:|
-| local_transcript | 1 |
-| local_video | 1 |
-| medium_markdown | 3 |
-| pdf | 13 |
-| webpage | 60 |
-| youtube | 69 |
-
-## Top resources by chunk count
-
-| Resource | Source type | Chunks |
-|---|---|---:|
-| [Getting Started With Embeddings](/resources/webpage_7e46dca0acc3e5be16343595987da50cc15588cd13cbfe86a069fd9d38079216) | webpage | 33 |
-| [Inside vLLM: Anatomy of a High-Throughput LLM Inference System - Aleksa Gordić](/resources/webpage_df11644e8c0603551fc44887813019ce9cd423157c4e69666ccb5c48b0b11dd1) | webpage | 26 |
-| [Attention Is All You Need](/resources/pdf_bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697) | pdf | 13 |
-| [Strategies for LLM Evals (GuideLLM, lm-eval-harness, OpenAI Evals Workshop) — Taylor Jordan Smith](/resources/youtube_89NuzmKokIk) | youtube | 11 |
-| [Lessons from the Trenches: Building LLM Evals That Work IRL: Aparna Dhinkaran](/resources/youtube_nbZzSC5A6hs) | youtube | 7 |
-| [vLLM: Easily Deploying & Serving LLMs](/resources/youtube_q5IF2PHA5SA) | youtube | 6 |
-| [Better RAG: Hybrid Search in Chat with Documents \| BM25 and Ensemble](/resources/youtube_r2m9DbEmeqI) | youtube | 6 |
-| [Understanding Embeddings in RAG and How to use them - Llama-Index](/resources/youtube_v6g8eo86T8A) | youtube | 6 |
-| [RAG vs. CAG: Solving Knowledge Gaps in AI Models](/resources/youtube_HdafI0t3sEY) | youtube | 5 |
-| [Agent Harness explained in 8min..](/resources/youtube_1a1VXDdIyrk) | youtube | 4 |
-| [7 AI Terms You Need to Know: Agents, RAG, ASI & More](/resources/youtube_VSFuqMh4hus) | youtube | 4 |
-| [2 Methods For Improving Retrieval in RAG](/resources/youtube_smGbeghV1JE) | youtube | 4 |
-| [COG-RAG-Giving-RAG-A-Brain](/resources/medium_markdown_7b139b1b02c2e62bdfe5f437517ec84c3b5101aa29bf6986785e589dca10abee) | medium_markdown | 3 |
-| [Adam Optimizer VISUALLY Explained](/resources/youtube_ViBaXbUPDt0) | youtube | 3 |
-| [Introduction: AI Evals For Everyone](/resources/youtube_qQIOUxhC4Xs) | youtube | 3 |
-| [How vLLM Works + Journey of Prompts to vLLM + Paged Attention](/resources/youtube_yHAcgyntYDQ) | youtube | 3 |
-| [What are LLM Evals ?](/resources/youtube_FdqrP7jvZEo) | youtube | 2 |
-| [Inside vLLM: How vLLM works](/resources/youtube_fR1HVMDnaqA) | youtube | 2 |
-| [Top 3 RAG Retrieval Strategies: Sparse, Dense, & Hybrid Explained](/resources/youtube_r0Dciuq0knU) | youtube | 2 |
-| [MIT18_06SC_intro_300k](/resources/media_230471310fb55e664dd2591ae50266a7bcabf064ba85c55e226f292c652f0cda) | local_video | 1 |
+| _none_ | 0 |
 
 ## Provenance
 

@@ -910,13 +910,21 @@ class TestContextPackBoundaries:
             )
 
     def test_no_search_context_page(self):
-        """No /search/context page was added by Prompt 33."""
+        """Prompt 34 has landed: /search/context is now allowed.
+
+        Prompt 33 still must not add duplicate context pages in unsupported
+        locations.
+        """
         for rel in (
-            "site/docs/search/context.md",
-            "site_generated/docs/search/context.md",
+            "site/docs/context.md",
+            "site/docs/context/index.md",
+            "site/docs/search/context/index.md",
+            "site_generated/docs/context.md",
+            "site_generated/docs/context/index.md",
+            "site_generated/docs/search/context/index.md",
         ):
             assert not (REPO_ROOT / rel).exists(), (
-                f"Prompt 33 must not add a {rel} page"
+                f"Unsupported duplicate context page exists: {rel}"
             )
 
     def test_pyproject_dependencies_unchanged(self):
@@ -956,15 +964,24 @@ class TestContextPackBoundaries:
             )
 
     def test_site_builder_unmodified(self):
-        """The site builder was not modified by Prompt 33."""
+        """Prompt 34 has landed: site builder may call context_pack for static pages.
+
+        It still must not call real model/provider integrations.
+        """
         text = (REPO_ROOT / "wiki" / "site" / "builder.py").read_text(
             encoding="utf-8"
         )
-        for needle in ("wiki.context_pack", "ContextPack", "context_pack"):
+        for needle in (
+            "OpenAICompatibleProvider",
+            "OllamaLocalProvider",
+            "OllamaCloudProvider",
+            "ask_llm",
+            "chat.completions",
+            "client.chat",
+        ):
             assert needle not in text, (
-                f"wiki/site/builder.py imports Prompt 33 module: {needle!r}"
+                f"wiki/site/builder.py contains provider/runtime symbol: {needle!r}"
             )
-
 
 # =============================================================================
 # Test class 6: TestContextPackFullSuite

@@ -276,10 +276,18 @@ class TestExplorerNoInlineJson:
         assert "const items =" not in html
 
     def test_explorer_loads_search_json(self):
+        # Prompt 36: the explorer Markdown now mounts a Vue
+        # component (``<SearchExplorer />``) instead of inlining
+        # a ``fetch(`` call. The Markdown still references
+        # ``search/all.json`` because the component itself reads
+        # that path.
         items = []
         html = search_index_generator._explorer(items)
         assert "search/all.json" in html
-        assert "fetch(" in html
+        assert "<SearchExplorer" in html
+        # And the Markdown no longer contains a raw ``fetch(``
+        # call (which used to be in a ``<script>`` block).
+        assert "fetch(" not in html
 
     def test_explorer_has_static_fallback_table(self):
         items = [
@@ -308,9 +316,13 @@ class TestExplorerNoInlineJson:
         assert "| [" in html
 
     def test_explorer_fetch_error_message(self):
+        # Prompt 36: the error message is now in the static
+        # Markdown description (wrapped in bold), not in an
+        # inline ``<script>`` block.
         items = []
         html = search_index_generator._explorer(items)
-        assert "Could not load search index. Check /search/all.json." in html
+        assert "Could not load search index" in html
+        assert "/search/all.json" in html
 
     def test_explorer_pipe_title_escaped(self):
         items = [
@@ -382,6 +394,7 @@ class TestSmokeSitePrompt21:
 class TestValidatePrompt21:
     def test_validate_detects_md_resource_links(self, tmp_path, monkeypatch):
         monkeypatch.setattr(config, "LLM_WIKI_DATA_DIR", tmp_path)
+        monkeypatch.setattr(site_builder, "repo_site_dir", tmp_path / "repo_docs")
         reg = Registry()
         monkeypatch.setattr(cli, "registry", reg)
         resources_dir = site_builder.repo_site_dir / "resources"
@@ -407,6 +420,7 @@ class TestValidatePrompt21:
 
     def test_validate_detects_missing_search_local_page_target(self, tmp_path, monkeypatch):
         monkeypatch.setattr(config, "LLM_WIKI_DATA_DIR", tmp_path)
+        monkeypatch.setattr(site_builder, "repo_site_dir", tmp_path / "repo_docs")
         reg = Registry()
         monkeypatch.setattr(cli, "registry", reg)
         for section in ["review", "explorer", "sources", "revision", "learn", "tags"]:

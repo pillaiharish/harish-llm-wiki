@@ -2181,6 +2181,357 @@ def build_context_cmd(
     _ = (include_scores, _SCHEMA_VERSION)
 
 
+@app.command("build-rag-prompt")
+def build_rag_prompt_cmd(
+    query: Optional[str] = typer.Argument(
+        None, help="Search query (positional, required)"
+    ),
+    mode: str = typer.Option(
+        "hybrid",
+        "--mode",
+        help="Retrieval mode: bm25, vector, hybrid, or graph-lite",
+    ),
+    limit: int = typer.Option(10, "--limit", "-n", help="Maximum number of chunks in the pack (max 100)"),
+    max_chars: int = typer.Option(
+        0,
+        "--max-chars",
+        help="Per-chunk char budget. 0 (or any non-positive value) disables trimming.",
+    ),
+    source_type: Optional[List[str]] = typer.Option(
+        None, "--source-type", help="Repeatable filter; restrict to listed source types"
+    ),
+    resource_id: Optional[str] = typer.Option(
+        None, "--resource-id", help="Restrict to a single resource id"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON to stdout"),
+    template_name: str = typer.Option(
+        "grounded_citations",
+        "--template",
+        help="Prompt template name (default: grounded_citations)",
+    ),
+    bm25_weight: float = typer.Option(
+        0.55, "--bm25-weight", help="Weight on the BM25 contribution (hybrid/graph-lite)"
+    ),
+    vector_weight: float = typer.Option(
+        0.45, "--vector-weight", help="Weight on the vector contribution (hybrid/graph-lite)"
+    ),
+    index_dir: Optional[Path] = typer.Option(
+        None, "--index-dir", help="Override the processed/bm25/ and processed/vector/ index directories"
+    ),
+):
+    """Build a deterministic no-LLM RAG prompt object (Prompt 34 MVP closure).
+
+    Wraps the context-pack builder (Prompt 33) and turns the
+    pack into a structured prompt object. The prompt is
+    ready to be passed to a future model-backed answer
+    generator; this command itself makes **no** model call
+    and produces deterministic output. The default output
+    is a Markdown report; pass ``--json`` to emit a JSON
+    document on stdout.
+    """
+    from wiki.rag_template import (
+        build_prompt as _build_prompt,
+        format_json as _format_prompt_json,
+        format_readable as _format_prompt_readable,
+    )
+    from wiki.retrieval import ALLOWED_MODES
+
+    if not query or not str(query).strip():
+        console.print("[red]✗[/red] query is empty")
+        raise typer.Exit(1)
+    if mode not in ALLOWED_MODES:
+        console.print(
+            f"[red]✗[/red] invalid --mode: {mode!r} "
+            f"(allowed: {sorted(ALLOWED_MODES)})"
+        )
+        raise typer.Exit(1)
+    if limit < 1:
+        console.print("[red]✗[/red] --limit must be >= 1")
+        raise typer.Exit(1)
+    if limit > 100:
+        console.print("[yellow]⚠[/yellow] --limit capped at 100")
+        limit = 100
+    if max_chars < 0:
+        console.print("[red]✗[/red] --max-chars must be >= 0")
+        raise typer.Exit(1)
+    if float(bm25_weight) < 0.0 or float(vector_weight) < 0.0:
+        console.print(
+            "[red]✗[/red] --bm25-weight and --vector-weight must be >= 0"
+        )
+        raise typer.Exit(1)
+    if float(bm25_weight) + float(vector_weight) <= 0.0:
+        console.print(
+            "[red]✗[/red] --bm25-weight + --vector-weight must sum to > 0"
+        )
+        raise typer.Exit(1)
+
+    if mode == "bm25":
+        effective_bm25_weight = bm25_weight
+        effective_vector_weight = 0.0
+    elif mode == "vector":
+        effective_bm25_weight = 0.0
+        effective_vector_weight = vector_weight
+    else:
+        effective_bm25_weight = bm25_weight
+        effective_vector_weight = vector_weight
+
+    try:
+        prompt = _build_prompt(
+            str(query),
+            mode=mode,
+            limit=limit,
+            max_chars=max_chars,
+            source_types=source_type,
+            resource_id=resource_id,
+            template_name=template_name,
+            bm25_weight=effective_bm25_weight,
+            vector_weight=effective_vector_weight,
+            index_dir=index_dir,
+        )
+    except FileNotFoundError as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise typer.Exit(1) from exc
+    except ValueError as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        sys.stdout.write(_format_prompt_json(prompt))
+        return
+    sys.stdout.write(_format_prompt_readable(prompt))
+    sys.stdout.write("\n")
+
+
+@app.command("mock-answer")
+def mock_answer_cmd(
+    query: Optional[str] = typer.Argument(
+        None, help="Search query (positional, required)"
+    ),
+    mode: str = typer.Option(
+        "hybrid",
+        "--mode",
+        help="Retrieval mode: bm25, vector, hybrid, or graph-lite",
+    ),
+    limit: int = typer.Option(10, "--limit", "-n", help="Maximum number of chunks in the pack (max 100)"),
+    max_chars: int = typer.Option(
+        0,
+        "--max-chars",
+        help="Per-chunk char budget. 0 (or any non-positive value) disables trimming.",
+    ),
+    source_type: Optional[List[str]] = typer.Option(
+        None, "--source-type", help="Repeatable filter; restrict to listed source types"
+    ),
+    resource_id: Optional[str] = typer.Option(
+        None, "--resource-id", help="Restrict to a single resource id"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON to stdout"),
+    bm25_weight: float = typer.Option(
+        0.55, "--bm25-weight", help="Weight on the BM25 contribution (hybrid/graph-lite)"
+    ),
+    vector_weight: float = typer.Option(
+        0.45, "--vector-weight", help="Weight on the vector contribution (hybrid/graph-lite)"
+    ),
+    index_dir: Optional[Path] = typer.Option(
+        None, "--index-dir", help="Override the processed/bm25/ and processed/vector/ index directories"
+    ),
+):
+    """Generate a deterministic no-LLM mock answer (Prompt 34 MVP closure).
+
+    Wraps the context-pack builder (Prompt 33) and produces a
+    short extractive answer from the top-scoring chunks. The
+    answer is clearly labeled ``MOCK / NO-LLM ANSWER``, cites
+    every claim with a stable ``[cite:N]`` label, and makes
+    **no** model call. The default output is a Markdown
+    report; pass ``--json`` to emit a JSON document on
+    stdout.
+    """
+    from wiki.mock_answer import (
+        generate_mock_answer as _generate_mock_answer,
+        format_json as _format_answer_json,
+        format_readable as _format_answer_readable,
+    )
+    from wiki.retrieval import ALLOWED_MODES
+
+    if not query or not str(query).strip():
+        console.print("[red]✗[/red] query is empty")
+        raise typer.Exit(1)
+    if mode not in ALLOWED_MODES:
+        console.print(
+            f"[red]✗[/red] invalid --mode: {mode!r} "
+            f"(allowed: {sorted(ALLOWED_MODES)})"
+        )
+        raise typer.Exit(1)
+    if limit < 1:
+        console.print("[red]✗[/red] --limit must be >= 1")
+        raise typer.Exit(1)
+    if limit > 100:
+        console.print("[yellow]⚠[/yellow] --limit capped at 100")
+        limit = 100
+    if max_chars < 0:
+        console.print("[red]✗[/red] --max-chars must be >= 0")
+        raise typer.Exit(1)
+    if float(bm25_weight) < 0.0 or float(vector_weight) < 0.0:
+        console.print(
+            "[red]✗[/red] --bm25-weight and --vector-weight must be >= 0"
+        )
+        raise typer.Exit(1)
+    if float(bm25_weight) + float(vector_weight) <= 0.0:
+        console.print(
+            "[red]✗[/red] --bm25-weight + --vector-weight must sum to > 0"
+        )
+        raise typer.Exit(1)
+
+    if mode == "bm25":
+        effective_bm25_weight = bm25_weight
+        effective_vector_weight = 0.0
+    elif mode == "vector":
+        effective_bm25_weight = 0.0
+        effective_vector_weight = vector_weight
+    else:
+        effective_bm25_weight = bm25_weight
+        effective_vector_weight = vector_weight
+
+    try:
+        answer = _generate_mock_answer(
+            str(query),
+            mode=mode,
+            limit=limit,
+            max_chars=max_chars,
+            source_types=source_type,
+            resource_id=resource_id,
+            bm25_weight=effective_bm25_weight,
+            vector_weight=effective_vector_weight,
+            index_dir=index_dir,
+        )
+    except FileNotFoundError as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise typer.Exit(1) from exc
+    except ValueError as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        sys.stdout.write(_format_answer_json(answer))
+        return
+    sys.stdout.write(_format_answer_readable(answer))
+    sys.stdout.write("\n")
+
+
+@app.command("eval-rag")
+def eval_rag_cmd(
+    query: Optional[str] = typer.Argument(
+        None, help="Search query (positional, required)"
+    ),
+    mode: str = typer.Option(
+        "hybrid",
+        "--mode",
+        help="Retrieval mode: bm25, vector, hybrid, or graph-lite",
+    ),
+    limit: int = typer.Option(10, "--limit", "-n", help="Maximum number of chunks in the pack (max 100)"),
+    max_chars: int = typer.Option(
+        0,
+        "--max-chars",
+        help="Per-chunk char budget. 0 (or any non-positive value) disables trimming.",
+    ),
+    source_type: Optional[List[str]] = typer.Option(
+        None, "--source-type", help="Repeatable filter; restrict to listed source types"
+    ),
+    resource_id: Optional[str] = typer.Option(
+        None, "--resource-id", help="Restrict to a single resource id"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON to stdout"),
+    bm25_weight: float = typer.Option(
+        0.55, "--bm25-weight", help="Weight on the BM25 contribution (hybrid/graph-lite)"
+    ),
+    vector_weight: float = typer.Option(
+        0.45, "--vector-weight", help="Weight on the vector contribution (hybrid/graph-lite)"
+    ),
+    index_dir: Optional[Path] = typer.Option(
+        None, "--index-dir", help="Override the processed/bm25/ and processed/vector/ index directories"
+    ),
+):
+    """Evaluate a no-LLM mock answer against its context pack (Prompt 34 MVP closure).
+
+    Wraps the context-pack builder (Prompt 33) and the
+    mock-answer generator, then runs the rule-based
+    :mod:`wiki.rag_eval` evaluator. The evaluator is
+    deterministic, makes **no** model call, and surfaces a
+    ``MOCK / NO-LLM`` marker in the report. The default
+    output is a Markdown report; pass ``--json`` to emit a
+    JSON document on stdout.
+    """
+    from wiki.rag_eval import (
+        eval_rag as _eval_rag,
+        format_json as _format_eval_json,
+        format_readable as _format_eval_readable,
+    )
+    from wiki.retrieval import ALLOWED_MODES
+
+    if not query or not str(query).strip():
+        console.print("[red]✗[/red] query is empty")
+        raise typer.Exit(1)
+    if mode not in ALLOWED_MODES:
+        console.print(
+            f"[red]✗[/red] invalid --mode: {mode!r} "
+            f"(allowed: {sorted(ALLOWED_MODES)})"
+        )
+        raise typer.Exit(1)
+    if limit < 1:
+        console.print("[red]✗[/red] --limit must be >= 1")
+        raise typer.Exit(1)
+    if limit > 100:
+        console.print("[yellow]⚠[/yellow] --limit capped at 100")
+        limit = 100
+    if max_chars < 0:
+        console.print("[red]✗[/red] --max-chars must be >= 0")
+        raise typer.Exit(1)
+    if float(bm25_weight) < 0.0 or float(vector_weight) < 0.0:
+        console.print(
+            "[red]✗[/red] --bm25-weight and --vector-weight must be >= 0"
+        )
+        raise typer.Exit(1)
+    if float(bm25_weight) + float(vector_weight) <= 0.0:
+        console.print(
+            "[red]✗[/red] --bm25-weight + --vector-weight must sum to > 0"
+        )
+        raise typer.Exit(1)
+
+    if mode == "bm25":
+        effective_bm25_weight = bm25_weight
+        effective_vector_weight = 0.0
+    elif mode == "vector":
+        effective_bm25_weight = 0.0
+        effective_vector_weight = vector_weight
+    else:
+        effective_bm25_weight = bm25_weight
+        effective_vector_weight = vector_weight
+
+    try:
+        report = _eval_rag(
+            str(query),
+            mode=mode,
+            limit=limit,
+            max_chars=max_chars,
+            source_types=source_type,
+            resource_id=resource_id,
+            bm25_weight=effective_bm25_weight,
+            vector_weight=effective_vector_weight,
+            index_dir=index_dir,
+        )
+    except FileNotFoundError as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise typer.Exit(1) from exc
+    except ValueError as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        sys.stdout.write(_format_eval_json(report))
+        return
+    sys.stdout.write(_format_eval_readable(report))
+    sys.stdout.write("\n")
+
+
 @app.command("eval-retrieval")
 def eval_retrieval(
     json_output: bool = typer.Option(False, "--json", help="Emit JSON to stdout"),
@@ -2531,7 +2882,7 @@ def smoke_site():
             warnings.append(("Graph viewer", f"Read error: {exc}"))
         else:
             required_viewer_strings = (
-                "public/graph/knowledge_graph.json",
+                "graph/knowledge_graph.json",
                 '<div id="graph-viewer">',
                 'id="graph-search"',
                 'id="graph-node-list"',
@@ -2883,11 +3234,11 @@ def validate(
     if viewer_repo_path.exists():
         try:
             viewer_content = viewer_repo_path.read_text(encoding="utf-8")
-            if "public/graph/knowledge_graph.json" not in viewer_content:
+            if "graph/knowledge_graph.json" not in viewer_content:
                 issues.append(
                     (
                         "warning",
-                        "Graph viewer does not reference /public/graph/knowledge_graph.json",
+                        "Graph viewer does not reference /graph/knowledge_graph.json",
                     )
                 )
         except Exception as exc:

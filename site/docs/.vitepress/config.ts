@@ -138,6 +138,19 @@ export default defineConfig({
           items: [
             { text: 'Retrieval Report', link: '/search/retrieval' },
           ]
+        },
+        {
+          text: 'Retrieval Eval',
+          items: [
+            { text: 'Retrieval Eval Report', link: '/search/eval' },
+          ]
+        },
+        {
+          text: 'RAG MVP (Mock / No-LLM)',
+          items: [
+            { text: 'Context Pack', link: '/search/context' },
+            { text: 'RAG Eval Report', link: '/search/rag-report' },
+          ]
         }
       ]
     },

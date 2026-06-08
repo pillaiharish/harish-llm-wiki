@@ -13,7 +13,7 @@ knowledge graph. Scores and reason lists come from the edge metadata.
 | resource_same_source_type_as_resource | 123 |
 | resource_shares_concept_with_resource | 190 |
 | resource_shares_topic_with_resource | 60 |
-| resource_similar_to_resource | 190 |
+| resource_similar_to_resource | 191 |
 
 ## Per-type details
 
@@ -131,9 +131,9 @@ Catch-all similarity edge. Emitted when a pair's combined topic/concept/keyword 
 | Getting Started With Embeddings | Better RAG: Hybrid Search in Chat with Documents \| BM25 and Ensemble | 20.0 | shared_concepts, shared_topics | rag-retrieval | cosine-similarity, embeddings, inference, llm, rag, retrieval |  |
 | Inside vLLM: Anatomy of a High-Throughput LLM Inference System - Aleksa Gordić | vLLM: Easily Deploying & Serving LLMs | 20.0 | shared_concepts, shared_keywords, shared_topics | llm-inference, vllm | attention, inference, llm, rag, transformer | vllm |
 
-_Showing top 20 of 190 edges for this type._
+_Showing top 20 of 191 edges for this type._
 
 ## Provenance
 
-- Generated: 2026-06-05T22:13:51.299892+00:00
+- Generated: 2026-06-08T13:36:42.639347+00:00
 - Detection: deterministic, no LLM, no embeddings, no BM25.
