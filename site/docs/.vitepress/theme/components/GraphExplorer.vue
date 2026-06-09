@@ -47,6 +47,27 @@ type LensValue =
 
 type LayoutValue = 'cose' | 'grid' | 'circle' | 'concentric'
 
+type PathStatus = 'idle' | 'missing_input' | 'same_node' | 'found' | 'not_found'
+
+type PathStep = {
+  fromId: string
+  fromLabel: string
+  edgeId: string
+  edgeType: string
+  toId: string
+  toLabel: string
+}
+
+type PathResult = {
+  sourceId: string
+  targetId: string
+  status: PathStatus
+  pathNodeIds: string[]
+  pathEdgeIds: string[]
+  hopCount: number
+  steps: PathStep[]
+}
+
 const LENS_TO_TYPE: Record<LensValue, string | null> = {
   all: null,
   resources: 'resource',
@@ -129,6 +150,13 @@ const edgeTypeFilter = ref<Set<string>>(new Set())
 const lens = ref<LensValue>('all')
 const layoutName = ref<LayoutValue>('cose')
 const neighborhoodMode = ref<boolean>(false)
+
+const pathSourceId = ref<string>('')
+const pathTargetId = ref<string>('')
+const pathStatus = ref<PathStatus>('idle')
+const pathNodeIds = ref<string[]>([])
+const pathEdgeIds = ref<string[]>([])
+const pathSteps = ref<PathStep[]>([])
 
 const canvasRef = ref<HTMLDivElement | null>(null)
 let cy: any = null
@@ -269,6 +297,121 @@ function neighborsOf(nodeId: string | null): NeighborItem[] {
     }
   }
   return out
+}
+
+const pathNodeOptions = computed<Array<{ id: string; label: string; type: string }>>(() => {
+  if (!graph.value) return []
+  return graph.value.nodes
+    .map((n) => ({ id: n.id, label: n.label || n.id, type: n.type }))
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+})
+
+function findShortestPath(sourceId: string, targetId: string): PathResult {
+  const empty: PathResult = {
+    sourceId: sourceId || '',
+    targetId: targetId || '',
+    status: 'idle',
+    pathNodeIds: [],
+    pathEdgeIds: [],
+    hopCount: 0,
+    steps: [],
+  }
+  if (!sourceId || !targetId) {
+    return { ...empty, status: 'missing_input' }
+  }
+  if (!nodeById(sourceId) || !nodeById(targetId)) {
+    return { ...empty, status: 'not_found' }
+  }
+  if (sourceId === targetId) {
+    return {
+      sourceId,
+      targetId,
+      status: 'same_node',
+      pathNodeIds: [sourceId],
+      pathEdgeIds: [],
+      hopCount: 0,
+      steps: [],
+    }
+  }
+  if (!graph.value) {
+    return { ...empty, status: 'not_found' }
+  }
+  const adj = new Map<string, Array<{ neighborId: string; edgeId: string }>>()
+  for (const e of graph.value.edges) {
+    if (!edgeTypeFilter.value.has(e.type)) continue
+    if (!adj.has(e.source)) adj.set(e.source, [])
+    if (!adj.has(e.target)) adj.set(e.target, [])
+    adj.get(e.source)!.push({ neighborId: e.target, edgeId: e.id })
+    adj.get(e.target)!.push({ neighborId: e.source, edgeId: e.id })
+  }
+  for (const list of adj.values()) {
+    list.sort((a, b) => {
+      if (a.neighborId < b.neighborId) return -1
+      if (a.neighborId > b.neighborId) return 1
+      if (a.edgeId < b.edgeId) return -1
+      if (a.edgeId > b.edgeId) return 1
+      return 0
+    })
+  }
+  const visited = new Set<string>([sourceId])
+  const parent = new Map<string, { prevId: string; edgeId: string }>()
+  const queue: string[] = [sourceId]
+  while (queue.length) {
+    const cur = queue.shift() as string
+    if (cur === targetId) break
+    const nb = adj.get(cur) || []
+    for (const { neighborId, edgeId } of nb) {
+      if (visited.has(neighborId)) continue
+      visited.add(neighborId)
+      parent.set(neighborId, { prevId: cur, edgeId })
+      queue.push(neighborId)
+    }
+  }
+  if (!visited.has(targetId)) {
+    return {
+      sourceId,
+      targetId,
+      status: 'not_found',
+      pathNodeIds: [],
+      pathEdgeIds: [],
+      hopCount: 0,
+      steps: [],
+    }
+  }
+  const pathNodeIdsLocal: string[] = []
+  const pathEdgeIdsLocal: string[] = []
+  let cur = targetId
+  while (cur !== sourceId) {
+    pathNodeIdsLocal.push(cur)
+    const p = parent.get(cur) as { prevId: string; edgeId: string }
+    pathEdgeIdsLocal.push(p.edgeId)
+    cur = p.prevId
+  }
+  pathNodeIdsLocal.push(sourceId)
+  pathNodeIdsLocal.reverse()
+  pathEdgeIdsLocal.reverse()
+  const steps: PathStep[] = pathEdgeIdsLocal.map((eid, i) => {
+    const e = edgeById(eid)
+    const fromId = pathNodeIdsLocal[i]
+    const toId = pathNodeIdsLocal[i + 1]
+    return {
+      fromId,
+      fromLabel: nodeById(fromId)?.label || fromId,
+      edgeId: eid,
+      edgeType: e ? e.type : '',
+      toId,
+      toLabel: nodeById(toId)?.label || toId,
+    }
+  })
+  return {
+    sourceId,
+    targetId,
+    status: 'found',
+    pathNodeIds: pathNodeIdsLocal,
+    pathEdgeIds: pathEdgeIdsLocal,
+    hopCount: pathNodeIdsLocal.length - 1,
+    steps,
+  }
 }
 
 function cyElements() {
@@ -488,6 +631,23 @@ function makeStyle() {
         'text-outline-color': '#fcfcfc',
         'text-outline-opacity': 0.9,
         'z-index': 11,
+      },
+    },
+    {
+      selector: '.path-highlight',
+      style: {
+        'border-color': '#1976d2',
+        'border-width': 4,
+        'line-color': '#1976d2',
+        'target-arrow-color': '#1976d2',
+        width: 3,
+        opacity: 1,
+        label: 'data(label)',
+        'font-size': spec.selectedFontSize,
+        'text-outline-width': 2,
+        'text-outline-color': '#fcfcfc',
+        'text-outline-opacity': 0.9,
+        'z-index': 12,
       },
     },
   ]
@@ -824,6 +984,7 @@ function buildCy() {
   // page.evaluate without DOM scraping. Cleaned up next to
   // __graphLabelDebug in onBeforeUnmount().
   updateExplorerStateDebug()
+  updatePathStateDebug()
 }
 
 function highlightSelection() {
@@ -868,7 +1029,9 @@ function reRenderCy() {
   currentZoom.value = cy.zoom()
   highlightSelection()
   applySemanticZoom()
+  applyPathHighlight()
   updateExplorerStateDebug()
+  updatePathStateDebug()
 }
 
 function fitGraph() {
@@ -929,6 +1092,15 @@ function onEdgeTypeCheckbox(ev: Event) {
   if (target.checked) edgeTypeFilter.value.add(t)
   else edgeTypeFilter.value.delete(t)
   reRenderCy()
+  if (pathStatus.value === 'found' || pathStatus.value === 'same_node') {
+    const r = findShortestPath(pathSourceId.value, pathTargetId.value)
+    pathStatus.value = r.status
+    pathNodeIds.value = r.pathNodeIds
+    pathEdgeIds.value = r.pathEdgeIds
+    pathSteps.value = r.steps
+    applyPathHighlight()
+    updatePathStateDebug()
+  }
 }
 
 function pickNeighbor(id: string) {
@@ -942,6 +1114,75 @@ function pickNeighbor(id: string) {
   // highlightSelection()/applySemanticZoom() already called above.
   if (neighborhoodMode.value) {
     reRenderCy()
+  }
+}
+
+function onPathSourceChange(ev: Event) {
+  const t = ev.target as HTMLSelectElement
+  pathSourceId.value = t.value
+  updatePathStateDebug()
+}
+
+function onPathTargetChange(ev: Event) {
+  const t = ev.target as HTMLSelectElement
+  pathTargetId.value = t.value
+  updatePathStateDebug()
+}
+
+function runPathFinder() {
+  const result = findShortestPath(pathSourceId.value, pathTargetId.value)
+  pathStatus.value = result.status
+  pathNodeIds.value = result.pathNodeIds
+  pathEdgeIds.value = result.pathEdgeIds
+  pathSteps.value = result.steps
+  applyPathHighlight()
+  updatePathStateDebug()
+}
+
+function clearPathFinder() {
+  pathSourceId.value = ''
+  pathTargetId.value = ''
+  pathStatus.value = 'idle'
+  pathNodeIds.value = []
+  pathEdgeIds.value = []
+  pathSteps.value = []
+  applyPathHighlight()
+  updatePathStateDebug()
+}
+
+function applyPathHighlight() {
+  if (!cy) return
+  cy.elements().removeClass('path-highlight')
+  const status = pathStatus.value
+  if (status !== 'found' && status !== 'same_node') {
+    return
+  }
+  const pathNodeSet = new Set(pathNodeIds.value)
+  const pathEdgeSet = new Set(pathEdgeIds.value)
+  cy.elements().addClass('faded')
+  for (const id of pathNodeSet) {
+    const n = cy.getElementById(id)
+    if (n && n.length) n.removeClass('faded').addClass('path-highlight')
+  }
+  for (const id of pathEdgeSet) {
+    const e = cy.getElementById(id)
+    if (e && e.length) e.removeClass('faded').addClass('path-highlight')
+  }
+}
+
+function updatePathStateDebug() {
+  if (typeof window === 'undefined') return
+  const r = pathStatus.value
+  const hop = pathNodeIds.value.length > 0 ? pathNodeIds.value.length - 1 : 0
+  ;(window as any).__graphPathState = {
+    ready: !!graph.value,
+    sourceId: pathSourceId.value,
+    targetId: pathTargetId.value,
+    status: r,
+    pathNodeIds: pathNodeIds.value.slice(),
+    pathEdgeIds: pathEdgeIds.value.slice(),
+    hopCount: hop,
+    steps: pathSteps.value.slice(),
   }
 }
 
@@ -1036,6 +1277,7 @@ async function copySelectedId() {
 
 function updateExplorerStateDebug() {
   if (typeof window === 'undefined') return
+  const hop = pathNodeIds.value.length > 0 ? pathNodeIds.value.length - 1 : 0
   ;(window as any).__graphExplorerState = {
     ready: !!graph.value,
     lens: lens.value,
@@ -1048,6 +1290,12 @@ function updateExplorerStateDebug() {
     visibleNodes: visibleNodeIds().length,
     visibleEdges: visibleEdgeCount.value,
     topConnectedIds: topConnectedIds.value,
+    pathFinder: {
+      status: pathStatus.value,
+      hopCount: hop,
+      sourceId: pathSourceId.value,
+      targetId: pathTargetId.value,
+    },
   }
 }
 
@@ -1156,6 +1404,7 @@ onBeforeUnmount(() => {
     delete (window as any).__graphCy
     delete (window as any).__graphLabelDebug
     delete (window as any).__graphExplorerState
+    delete (window as any).__graphPathState
   }
 })
 
@@ -1286,6 +1535,43 @@ const selectedDisplay = computed<string>(() => {
         <option value="circle">circle</option>
         <option value="concentric">concentric</option>
       </select>
+      <fieldset id="graph-path-finder-controls" class="ge-path-controls">
+        <legend>Path finder</legend>
+        <label for="graph-path-source" class="ge-label">Source:</label>
+        <select
+          id="graph-path-source"
+          :value="pathSourceId"
+          @change="onPathSourceChange"
+        >
+          <option value="">— pick a source node —</option>
+          <option v-for="n in pathNodeOptions" :key="`src-${n.id}`" :value="n.id">
+            {{ n.label }} &lt;{{ n.type }}&gt;
+          </option>
+        </select>
+        <label for="graph-path-target" class="ge-label">Target:</label>
+        <select
+          id="graph-path-target"
+          :value="pathTargetId"
+          @change="onPathTargetChange"
+        >
+          <option value="">— pick a target node —</option>
+          <option v-for="n in pathNodeOptions" :key="`dst-${n.id}`" :value="n.id">
+            {{ n.label }} &lt;{{ n.type }}&gt;
+          </option>
+        </select>
+        <button
+          id="graph-path-find"
+          type="button"
+          :disabled="!pathSourceId || !pathTargetId"
+          @click="runPathFinder"
+        >Find path</button>
+        <button
+          id="graph-path-clear"
+          type="button"
+          :disabled="pathStatus === 'idle' && !pathSourceId && !pathTargetId"
+          @click="clearPathFinder"
+        >Clear</button>
+      </fieldset>
       <button
         id="graph-neighborhood-mode"
         type="button"
@@ -1359,6 +1645,53 @@ const selectedDisplay = computed<string>(() => {
           <em>Neighborhood mode is on, but no node is selected. Select a node in the canvas or the list to focus the closed neighbourhood.</em>
         </p>
       </div>
+    </div>
+
+    <div
+      id="graph-path-result"
+      class="ge-path-result"
+      :data-status="pathStatus"
+    >
+      <h3>Path finder</h3>
+      <p id="graph-path-status" class="ge-path-status">
+        <template v-if="pathStatus === 'idle' || pathStatus === 'missing_input'">
+          <em>Pick a source and a target node, then click <strong>Find path</strong>.</em>
+        </template>
+        <template v-else-if="pathStatus === 'same_node'">
+          Source and target are the same node
+          (<strong>{{ pathSourceId }}</strong>). No traversal needed.
+        </template>
+        <template v-else-if="pathStatus === 'not_found'">
+          <em>No path found between the chosen nodes
+          (with the current edge-type filter).</em>
+        </template>
+        <template v-else-if="pathStatus === 'found'">
+          Path from <strong>{{ pathSourceId }}</strong>
+          to <strong>{{ pathTargetId }}</strong>:
+          <span id="graph-path-hops">{{ pathNodeIds.length - 1 }}</span> hop(s),
+          <span id="graph-path-node-count">{{ pathNodeIds.length }}</span> node(s),
+          <span id="graph-path-edge-count">{{ pathEdgeIds.length }}</span> edge(s).
+        </template>
+      </p>
+      <ol
+        v-if="pathStatus === 'found'"
+        id="graph-path-steps"
+        :data-count="pathSteps.length"
+      >
+        <li
+          v-for="(s, i) in pathSteps"
+          :key="`${s.edgeId}-${i}`"
+          class="ge-path-step"
+          :data-from-id="s.fromId"
+          :data-edge-id="s.edgeId"
+          :data-to-id="s.toId"
+          :data-edge-type="s.edgeType"
+        >
+          <code class="ge-path-step-from">{{ s.fromLabel }}</code>
+          <span class="ge-path-step-arrow"> --{{ s.edgeType }}--> </span>
+          <code class="ge-path-step-to">{{ s.toLabel }}</code>
+        </li>
+      </ol>
     </div>
 
     <div id="graph-canvas" ref="canvasRef" class="ge-canvas"></div>
@@ -1620,5 +1953,66 @@ const selectedDisplay = computed<string>(() => {
   border-radius: 3px;
   background: var(--vp-c-default-soft, #eef);
   margin-right: 0.3rem;
+}
+.ge-path-controls {
+  border: 1px solid var(--vp-c-divider, #ccc);
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+  margin: 0;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+.ge-path-controls legend {
+  font-weight: 600;
+  padding: 0 0.25rem;
+}
+.ge-path-controls select {
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--vp-c-divider, #ccc);
+  border-radius: 4px;
+  background: var(--vp-c-bg, #fff);
+  cursor: pointer;
+  min-width: 180px;
+  max-width: 260px;
+}
+.ge-path-controls button[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ge-path-result {
+  flex: 1 1 100%;
+  border: 1px solid #1976d2;
+  border-left-width: 4px;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  background: var(--vp-c-bg-soft, #fafafa);
+}
+.ge-path-result h3 {
+  margin: 0 0 0.4rem;
+  color: #1976d2;
+}
+.ge-path-status {
+  margin: 0 0 0.5rem;
+}
+#graph-path-steps {
+  margin: 0;
+  padding-left: 1.4rem;
+}
+.ge-path-step {
+  margin-bottom: 0.15rem;
+  font-size: 0.9rem;
+}
+.ge-path-step code {
+  background: var(--vp-c-default-soft, #eef);
+  padding: 0 0.25rem;
+  border-radius: 3px;
+  font-size: 0.85em;
+}
+.ge-path-step-arrow {
+  color: #1976d2;
+  font-weight: 600;
+  margin: 0 0.25rem;
 }
 </style>

@@ -147,6 +147,11 @@ links above can still be used to browse the graph data.</p>
     metadata.
 11. Drag nodes to rearrange them, use the mouse wheel to zoom, and
     click-drag the empty canvas to pan.
+12. Use the **Path finder** above the canvas to ask "How is node A
+    connected to node B?" — pick a source and a target from the
+    dropdowns, click **Find path**, and the result panel shows the
+    shortest hop chain, the hop / node / edge counts, and highlights
+    the path on the canvas. Click **Clear** to reset.
 
 ## Provenance
 
