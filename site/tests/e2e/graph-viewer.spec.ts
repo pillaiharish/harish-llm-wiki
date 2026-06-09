@@ -1462,3 +1462,532 @@ test('Prompt 38 explorer state: window.__graphExplorerState reports lens / layou
   expect(typeof state.visibleEdges).toBe('number')
   expect(Array.isArray(state.topConnectedIds)).toBe(true)
 })
+
+// ---------------------------------------------------------------------------
+// Prompt 39 — Path Finder and Relationship Explorer v1
+// ---------------------------------------------------------------------------
+
+/**
+ * Helper: wait for the Prompt 39 ``window.__graphPathState``
+ * debug handle to be set so the path-finder state can be
+ * inspected from page.evaluate.
+ */
+async function gotoViewerWithPathState(page: Page) {
+  await gotoViewerWithExplorerState(page)
+  await page.waitForFunction(
+    () => {
+      const s = (window as any).__graphPathState
+      return s && s.ready === true
+    },
+    null,
+    { timeout: 15_000 }
+  )
+}
+
+test('Prompt 39 path finder: controls are visible and source/target selects are populated', async ({
+  page,
+}) => {
+  await gotoViewerWithPathState(page)
+  const ctrl = page.locator('#graph-path-finder-controls')
+  await expect(ctrl).toBeVisible()
+  const src = page.locator('#graph-path-source')
+  const dst = page.locator('#graph-path-target')
+  await expect(src).toBeVisible()
+  await expect(dst).toBeVisible()
+  // Each select must have a placeholder + at least one real
+  // graph node, so at least 2 options.
+  const srcOpts = await src.locator('option').count()
+  const dstOpts = await dst.locator('option').count()
+  expect(srcOpts, 'source select must have at least 2 options').toBeGreaterThanOrEqual(2)
+  expect(dstOpts, 'target select must have at least 2 options').toBeGreaterThanOrEqual(2)
+  await expect(page.locator('#graph-path-find')).toBeVisible()
+  await expect(page.locator('#graph-path-clear')).toBeVisible()
+})
+
+test('Prompt 39 path finder: Find button is disabled until source and target are both set', async ({
+  page,
+}) => {
+  await gotoViewerWithPathState(page)
+  const findBtn = page.locator('#graph-path-find')
+  // Initially disabled (no source/target).
+  await expect(findBtn).toBeDisabled()
+  // Pick a real source — still disabled (target is empty).
+  const firstValue = await page.evaluate(() => {
+    const sel = document.getElementById('graph-path-source') as HTMLSelectElement
+    return sel && sel.options.length > 1 ? sel.options[1].value : ''
+  })
+  expect(firstValue).toBeTruthy()
+  await page.locator('#graph-path-source').selectOption(firstValue)
+  await expect(findBtn).toBeDisabled()
+  // Pick a real target — now enabled.
+  const secondValue = await page.evaluate(() => {
+    const sel = document.getElementById('graph-path-target') as HTMLSelectElement
+    return sel && sel.options.length > 2 ? sel.options[2].value : ''
+  })
+  expect(secondValue).toBeTruthy()
+  await page.locator('#graph-path-target').selectOption(secondValue)
+  await expect(findBtn).toBeEnabled()
+})
+
+test('Prompt 39 path finder: same source and target produces a same_node result', async ({
+  page,
+}) => {
+  await gotoViewerWithPathState(page)
+  const sameId = await page.evaluate(() => {
+    const sel = document.getElementById('graph-path-source') as HTMLSelectElement
+    return sel && sel.options.length > 1 ? sel.options[1].value : ''
+  })
+  expect(sameId).toBeTruthy()
+  await page.locator('#graph-path-source').selectOption(sameId)
+  await page.locator('#graph-path-target').selectOption(sameId)
+  await page.locator('#graph-path-find').click()
+  await page.waitForFunction(
+    () => {
+      const s = (window as any).__graphPathState
+      return s && (s.status === 'same_node' || s.status === 'found')
+    },
+    null,
+    { timeout: 5_000 }
+  )
+  const state = await page.evaluate(() => (window as any).__graphPathState)
+  expect(state.status).toBe('same_node')
+  expect(state.hopCount).toBe(0)
+  expect(Array.isArray(state.pathNodeIds)).toBe(true)
+  expect(state.pathNodeIds.length).toBe(1)
+  expect(state.pathNodeIds[0]).toBe(sameId)
+})
+
+test('Prompt 39 path finder: disconnected via edge-type filter produces a not_found result', async ({
+  page,
+}) => {
+  await gotoViewerWithPathState(page)
+  // Uncheck ALL edge types — with zero edges allowed, the BFS
+  // cannot find any path between two distinct nodes.
+  await page.evaluate(() => {
+    const fset = document.getElementById('graph-filter-edge-type')
+    if (!fset) return
+    const boxes = fset.querySelectorAll('input[type="checkbox"]')
+    boxes.forEach((b: any) => {
+      if (b.checked) b.click()
+    })
+  })
+  // Pick two distinct nodes for source / target.
+  const [a, b] = await page.evaluate(() => {
+    const src = document.getElementById('graph-path-source') as HTMLSelectElement
+    return [src.options[1].value, src.options[2].value]
+  })
+  expect(a).toBeTruthy()
+  expect(b).toBeTruthy()
+  expect(a).not.toBe(b)
+  await page.locator('#graph-path-source').selectOption(a)
+  await page.locator('#graph-path-target').selectOption(b)
+  await page.locator('#graph-path-find').click()
+  await page.waitForTimeout(500)
+  const state = await page.evaluate(() => (window as any).__graphPathState)
+  expect(state.status).toBe('not_found')
+  expect(state.pathNodeIds.length).toBe(0)
+  expect(state.pathEdgeIds.length).toBe(0)
+  expect(state.hopCount).toBe(0)
+  // Restore edge types for downstream tests.
+  await page.evaluate(() => {
+    const fset = document.getElementById('graph-filter-edge-type')
+    if (!fset) return
+    const boxes = fset.querySelectorAll('input[type="checkbox"]')
+    boxes.forEach((b: any) => {
+      if (!b.checked) b.click()
+    })
+  })
+})
+
+test('Prompt 39 path finder: a real pair produces a found result with a readable chain', async ({
+  page,
+}) => {
+  await gotoViewerWithPathState(page)
+  // Use Show all so the full graph (all 65 nodes) is on the
+  // canvas — this guarantees every node on the path is visible
+  // and thus gets the path-highlight class.
+  await page.locator('#graph-show-all').click()
+  await page.waitForFunction(
+    () => (window as any).__graphCy.nodes().length > 50,
+    null,
+    { timeout: 10_000 }
+  )
+  // Pick two distinct nodes that both have at least one neighbor.
+  const [a, b] = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    const ids: string[] = []
+    cy.nodes().forEach((n: any) => {
+      if (ids.length < 2 && n.neighborhood().length > 0) {
+        ids.push(n.id() as string)
+      }
+    })
+    return ids
+  })
+  expect(a).toBeTruthy()
+  expect(b).toBeTruthy()
+  expect(a).not.toBe(b)
+  await page.locator('#graph-path-source').selectOption(a)
+  await page.locator('#graph-path-target').selectOption(b)
+  await page.locator('#graph-path-find').click()
+  await page.waitForFunction(
+    (args: { sa: string; tb: string }) => {
+      const s = (window as any).__graphPathState
+      return (
+        s &&
+        s.status === 'found' &&
+        s.sourceId === args.sa &&
+        s.targetId === args.tb
+      )
+    },
+    { sa: a, tb: b },
+    { timeout: 5_000 }
+  )
+  const state = await page.evaluate(() => (window as any).__graphPathState)
+  expect(state.status).toBe('found')
+  expect(state.pathNodeIds.length).toBeGreaterThanOrEqual(2)
+  expect(state.pathNodeIds[0]).toBe(a)
+  expect(state.pathNodeIds[state.pathNodeIds.length - 1]).toBe(b)
+  // pathNodeIds.length === pathEdgeIds.length + 1
+  expect(state.pathNodeIds.length).toBe(state.pathEdgeIds.length + 1)
+  expect(state.hopCount).toBe(state.pathEdgeIds.length)
+  // The result panel shows the hop / node / edge counts.
+  const hopsText = await page.locator('#graph-path-hops').innerText()
+  const nodesText = await page.locator('#graph-path-node-count').innerText()
+  const edgesText = await page.locator('#graph-path-edge-count').innerText()
+  expect(Number(hopsText)).toBe(state.hopCount)
+  expect(Number(nodesText)).toBe(state.pathNodeIds.length)
+  expect(Number(edgesText)).toBe(state.pathEdgeIds.length)
+  // The steps <ol> has data-count matching the number of edges.
+  const stepsCount = await page
+    .locator('#graph-path-steps')
+    .getAttribute('data-count')
+  expect(Number(stepsCount)).toBe(state.pathEdgeIds.length)
+  // Each <li.ge-path-step> contains a --<edgeType>--> substring.
+  const stepsText = await page.locator('#graph-path-steps').innerText()
+  expect(stepsText).toMatch(/--[a-z_]+-->/)
+})
+
+test('Prompt 39 path finder: path nodes and edges are highlighted on the canvas', async ({
+  page,
+}) => {
+  await gotoViewerWithPathState(page)
+  await page.locator('#graph-show-all').click()
+  await page.waitForFunction(
+    () => (window as any).__graphCy.nodes().length > 50,
+    null,
+    { timeout: 10_000 }
+  )
+  const [a, b] = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    const ids: string[] = []
+    cy.nodes().forEach((n: any) => {
+      if (ids.length < 2 && n.neighborhood().length > 0) {
+        ids.push(n.id() as string)
+      }
+    })
+    return ids
+  })
+  await page.locator('#graph-path-source').selectOption(a)
+  await page.locator('#graph-path-target').selectOption(b)
+  await page.locator('#graph-path-find').click()
+  await page.waitForFunction(
+    () => {
+      const s = (window as any).__graphPathState
+      return s && s.status === 'found'
+    },
+    null,
+    { timeout: 5_000 }
+  )
+  const counts = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    return {
+      pathNodes: cy.nodes('.path-highlight').length,
+      pathEdges: cy.edges('.path-highlight').length,
+      fadedNonPath: cy
+        .nodes()
+        .not('.path-highlight')
+        .filter('.faded').length,
+      fadedNonPathEdges: cy
+        .edges()
+        .not('.path-highlight')
+        .filter('.faded').length,
+    }
+  })
+  const state = await page.evaluate(() => (window as any).__graphPathState)
+  expect(counts.pathNodes, 'cy.nodes(.path-highlight) must equal pathNodeIds.length').toBe(
+    state.pathNodeIds.length
+  )
+  expect(counts.pathEdges, 'cy.edges(.path-highlight) must equal pathEdgeIds.length').toBe(
+    state.pathEdgeIds.length
+  )
+  // Non-path elements should be faded.
+  expect(
+    counts.fadedNonPath,
+    'non-path nodes should be faded while a path is active'
+  ).toBeGreaterThan(0)
+  expect(
+    counts.fadedNonPathEdges,
+    'non-path edges should be faded while a path is active'
+  ).toBeGreaterThan(0)
+})
+
+test('Prompt 39 path finder: clearing the path removes the highlight and resets state', async ({
+  page,
+}) => {
+  await gotoViewerWithPathState(page)
+  await page.locator('#graph-show-all').click()
+  await page.waitForFunction(
+    () => (window as any).__graphCy.nodes().length > 50,
+    null,
+    { timeout: 10_000 }
+  )
+  const [a, b] = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    const ids: string[] = []
+    cy.nodes().forEach((n: any) => {
+      if (ids.length < 2 && n.neighborhood().length > 0) {
+        ids.push(n.id() as string)
+      }
+    })
+    return ids
+  })
+  await page.locator('#graph-path-source').selectOption(a)
+  await page.locator('#graph-path-target').selectOption(b)
+  await page.locator('#graph-path-find').click()
+  await page.waitForFunction(
+    () => {
+      const s = (window as any).__graphPathState
+      return s && s.status === 'found'
+    },
+    null,
+    { timeout: 5_000 }
+  )
+  // Now click Clear.
+  await page.locator('#graph-path-clear').click()
+  await page.waitForFunction(
+    () => {
+      const s = (window as any).__graphPathState
+      return s && s.status === 'idle' && s.pathNodeIds.length === 0
+    },
+    null,
+    { timeout: 5_000 }
+  )
+  const state = await page.evaluate(() => (window as any).__graphPathState)
+  expect(state.status).toBe('idle')
+  expect(state.sourceId).toBe('')
+  expect(state.targetId).toBe('')
+  expect(state.pathNodeIds.length).toBe(0)
+  expect(state.pathEdgeIds.length).toBe(0)
+  expect(state.hopCount).toBe(0)
+  const counts = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    return {
+      pathNodes: cy.nodes('.path-highlight').length,
+      pathEdges: cy.edges('.path-highlight').length,
+    }
+  })
+  expect(counts.pathNodes, 'cy.nodes(.path-highlight) must be 0 after clear').toBe(0)
+  expect(counts.pathEdges, 'cy.edges(.path-highlight) must be 0 after clear').toBe(0)
+})
+
+test('Prompt 39 path finder: BFS is deterministic across two runs of the same pair', async ({
+  page,
+}) => {
+  await gotoViewerWithPathState(page)
+  await page.locator('#graph-show-all').click()
+  await page.waitForFunction(
+    () => (window as any).__graphCy.nodes().length > 50,
+    null,
+    { timeout: 10_000 }
+  )
+  const [a, b] = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    const ids: string[] = []
+    cy.nodes().forEach((n: any) => {
+      if (ids.length < 2 && n.neighborhood().length > 0) {
+        ids.push(n.id() as string)
+      }
+    })
+    return ids
+  })
+  await page.locator('#graph-path-source').selectOption(a)
+  await page.locator('#graph-path-target').selectOption(b)
+  await page.locator('#graph-path-find').click()
+  await page.waitForFunction(
+    () => {
+      const s = (window as any).__graphPathState
+      return s && s.status === 'found'
+    },
+    null,
+    { timeout: 5_000 }
+  )
+  const first = await page.evaluate(() => {
+    const s = (window as any).__graphPathState
+    return {
+      pathNodeIds: s.pathNodeIds.slice(),
+      pathEdgeIds: s.pathEdgeIds.slice(),
+    }
+  })
+  // Re-run the same query.
+  await page.locator('#graph-path-find').click()
+  await page.waitForTimeout(300)
+  const second = await page.evaluate(() => {
+    const s = (window as any).__graphPathState
+    return {
+      pathNodeIds: s.pathNodeIds.slice(),
+      pathEdgeIds: s.pathEdgeIds.slice(),
+    }
+  })
+  expect(JSON.stringify(second.pathNodeIds)).toBe(JSON.stringify(first.pathNodeIds))
+  expect(JSON.stringify(second.pathEdgeIds)).toBe(JSON.stringify(first.pathEdgeIds))
+})
+
+test('Prompt 39 path finder: changing the edge-type filter re-runs the BFS', async ({
+  page,
+}) => {
+  await gotoViewerWithPathState(page)
+  await page.locator('#graph-show-all').click()
+  await page.waitForFunction(
+    () => (window as any).__graphCy.nodes().length > 50,
+    null,
+    { timeout: 10_000 }
+  )
+  // Pick two nodes from distinct clusters of the graph so
+  // their path goes through several different edge types.
+  const [a, b, firstEdgeType] = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    const a = cy.nodes()[0].id() as string
+    // Find a node at high "graph distance" from a — not the
+    // closed neighbourhood of a.
+    const nbh = new Set<string>([a])
+    cy.edges().forEach((e: any) => {
+      if (e.data('source') === a) nbh.add(e.data('target') as string)
+      else if (e.data('target') === a) nbh.add(e.data('source') as string)
+    })
+    let b: string | null = null
+    let firstEdge: string | null = null
+    cy.nodes().forEach((n: any) => {
+      if (b) return
+      if (nbh.has(n.id() as string)) return
+      // Need at least one edge leading to/from `a` of a type
+      // that is also present in this path.
+      const id = n.id() as string
+      const e = cy.edges().filter((ee: any) => {
+        return (
+          (ee.data('source') === id || ee.data('target') === id) &&
+          (ee.data('source') === a || ee.data('target') === a)
+        )
+      })[0]
+      if (e) {
+        b = id
+        firstEdge = e.data('type') as string
+      }
+    })
+    if (!b) {
+      // Fallback: pick the last node and any edge type.
+      b = cy.nodes()[cy.nodes().length - 1].id() as string
+      firstEdge = cy.edges()[0].data('type') as string
+    }
+    return [a, b as string, firstEdge as string]
+  })
+  await page.locator('#graph-path-source').selectOption(a)
+  await page.locator('#graph-path-target').selectOption(b)
+  await page.locator('#graph-path-find').click()
+  await page.waitForFunction(
+    () => {
+      const s = (window as any).__graphPathState
+      return s && s.status === 'found'
+    },
+    null,
+    { timeout: 5_000 }
+  )
+  // Uncheck the first edge type of the path. The BFS must
+  // re-run, and the new path must NOT use that edge type.
+  const cb = page.locator(`#graph-filter-edge-type-${firstEdgeType}`)
+  await expect(cb).toBeVisible()
+  await cb.click()
+  await page.waitForTimeout(500)
+  const after = await page.evaluate((blocked: string) => {
+    const cy = (window as any).__graphCy
+    const s = (window as any).__graphPathState
+    let usesBlocked = false
+    cy.edges('.path-highlight').forEach((e: any) => {
+      if (e.data('type') === blocked) usesBlocked = true
+    })
+    return { status: s.status, usesBlocked }
+  }, firstEdgeType)
+  // The new path either no longer exists (not_found) or uses
+  // a different set of edge types that excludes `firstEdgeType`.
+  expect(after.usesBlocked, 'no path edge should have the blocked type').toBe(false)
+  // Restore the edge-type filter.
+  await cb.click()
+})
+
+test('Prompt 39 path finder: window.__graphPathState has all required deterministic fields', async ({
+  page,
+}) => {
+  await gotoViewerWithPathState(page)
+  const state = await page.evaluate(() => (window as any).__graphPathState)
+  expect(state).toBeTruthy()
+  expect(state.ready).toBe(true)
+  expect(typeof state.sourceId).toBe('string')
+  expect(typeof state.targetId).toBe('string')
+  expect(typeof state.status).toBe('string')
+  expect(Array.isArray(state.pathNodeIds)).toBe(true)
+  expect(Array.isArray(state.pathEdgeIds)).toBe(true)
+  expect(typeof state.hopCount).toBe('number')
+  expect(
+    [
+      'idle',
+      'missing_input',
+      'same_node',
+      'found',
+      'not_found',
+    ]
+  ).toContain(state.status)
+})
+
+test('Prompt 39 path finder: no duplicate DOM ids after running the finder and zooming', async ({
+  page,
+}) => {
+  await gotoViewerWithPathState(page)
+  // Drive several zoom levels to flush any duplicate-id regressions
+  // the new path-finder controls might introduce.
+  for (const z of [0.25, 0.7, 1.5, 3.0]) {
+    await page.evaluate((zoom: number) => {
+      const cy = (window as any).__graphCy
+      cy.zoom(zoom)
+      cy.emit('zoom')
+    }, z)
+    await page.waitForTimeout(150)
+  }
+  // Run a real path query to ensure the path-finder DOM is in
+  // its "found" state during the duplicate-id sweep.
+  const [a, b] = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    const ids: string[] = []
+    cy.nodes().forEach((n: any) => {
+      if (ids.length < 2 && n.neighborhood().length > 0) {
+        ids.push(n.id() as string)
+      }
+    })
+    return ids
+  })
+  await page.locator('#graph-path-source').selectOption(a)
+  await page.locator('#graph-path-target').selectOption(b)
+  await page.locator('#graph-path-find').click()
+  await page.waitForTimeout(300)
+  const dupes = await page.evaluate(() => {
+    const ids: Record<string, number> = {}
+    const all = document.querySelectorAll('#graph-explorer, #graph-explorer *')
+    all.forEach((el) => {
+      const id = el.getAttribute('id')
+      if (!id) return
+      ids[id] = (ids[id] || 0) + 1
+    })
+    return Object.entries(ids)
+      .filter(([, n]) => n > 1)
+      .map(([id, n]) => `${id}×${n}`)
+  })
+  expect(dupes, `found duplicate DOM ids: ${dupes.join(', ')}`).toEqual([])
+})
