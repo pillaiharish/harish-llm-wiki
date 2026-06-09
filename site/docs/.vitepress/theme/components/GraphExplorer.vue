@@ -78,6 +78,19 @@ type GraphQueryParams = {
   path: boolean
 }
 
+type GraphExplorerMode = 'reference' | 'workspace'
+
+const props = withDefaults(
+  defineProps<{
+    mode?: GraphExplorerMode
+    shareBasePath?: string
+  }>(),
+  {
+    mode: 'reference',
+    shareBasePath: '/graph/explore',
+  }
+)
+
 const VALID_LENS_VALUES: LensValue[] = [
   'all',
   'resources',
@@ -186,6 +199,8 @@ let resizeObserver: ResizeObserver | null = null
 let resizeDebounce: ReturnType<typeof setTimeout> | null = null
 let lastNodeIdSet: string = ''
 
+const isWorkspaceMode = computed<boolean>(() => props.mode === 'workspace')
+
 const allNodeTypes = computed<string[]>(() => {
   if (!graph.value) return []
   const set = new Set<string>()
@@ -236,6 +251,14 @@ function edgeById(id: string | null): GraphEdge | null {
   return graph.value.edges.find((e) => e.id === id) || null
 }
 
+const REVIEW_PAGE_ROUTE_BY_SLUG: Record<string, string> = {
+  weak: '/review/weak-notes',
+  fallback: '/review/fallback-notes',
+  failed: '/review/failed-notes',
+  missing_citations: '/review/missing-citations',
+  stale: '/review/stale-notes',
+}
+
 function nodeRoute(n: GraphNode | null): string | null {
   if (!n) return null
   if (n.type === 'resource') {
@@ -246,7 +269,10 @@ function nodeRoute(n: GraphNode | null): string | null {
   if (n.type === 'concept') return `/concepts/${n.slug}`
   if (n.type === 'tag') return `/tags/#${n.slug}`
   if (n.type === 'learn_chapter') return `/learn/${n.slug}`
-  if (n.type === 'review_page') return `/review/`
+  if (n.type === 'review_page') {
+    const slug = String(n.slug || '')
+    return REVIEW_PAGE_ROUTE_BY_SLUG[slug] || '/review/'
+  }
   return null
 }
 
@@ -1039,13 +1065,24 @@ function nodeSetChanged(): boolean {
   return cur !== lastNodeIdSet
 }
 
+function nodePositionsCollapsed(): boolean {
+  if (!cy) return false
+  const nodes = cy.nodes()
+  if (!nodes || nodes.length <= 1) return false
+  const first = nodes[0].position()
+  return nodes.every((n: any) => {
+    const pos = n.position()
+    return Math.abs(pos.x - first.x) < 0.01 && Math.abs(pos.y - first.y) < 0.01
+  })
+}
+
 function reRenderCy() {
   if (!cy) return
   const els = cyElements()
   const changed = nodeSetChanged()
   cy.elements().remove()
   cy.add(els)
-  if (changed) {
+  if (changed || nodePositionsCollapsed()) {
     cy.layout(layoutOptionsFor(layoutName.value)).run()
     lastNodeIdSet = visibleNodeIds().sort().join('|')
   }
@@ -1324,10 +1361,7 @@ function buildShareableGraphUrl(): string {
     typeof window !== 'undefined' && window.location
       ? window.location.origin || ''
       : ''
-  const path =
-    typeof window !== 'undefined' && window.location
-      ? window.location.pathname || '/graph/viewer'
-      : '/graph/viewer'
+  const path = props.shareBasePath || '/graph/explore'
   if (!qs) return origin + path
   return origin + path + '?' + qs
 }
@@ -1728,357 +1762,539 @@ const selectedDisplay = computed<string>(() => {
 </script>
 
 <template>
-  <div class="graph-explorer">
-    <div id="graph-controls" class="ge-controls">
-      <label for="graph-search" class="ge-label">Search nodes:</label>
-      <input
-        id="graph-search"
-        type="search"
-        placeholder="label, slug, or id"
-        :value="searchTerm"
-        @input="onSearchInput"
-      />
-      <button id="graph-zoom-in" type="button" title="Zoom in" @click="zoomIn">+ Zoom in</button>
-      <button id="graph-zoom-out" type="button" title="Zoom out" @click="zoomOut">− Zoom out</button>
-      <button id="graph-fit" type="button" title="Fit graph to viewport" @click="fitGraph">Fit graph</button>
-      <button id="graph-reset-zoom" type="button" title="Reset zoom to 1×" @click="resetZoom">Reset zoom</button>
-      <button
-        id="graph-show-all"
-        type="button"
-        :data-state="showAll ? 'all' : 'top'"
-        @click="toggleShowAll"
-      >{{ showAll ? 'Show top' : 'Show all' }}</button>
-      <fieldset id="graph-filter-node-type">
-        <legend>Node types</legend>
-        <label v-for="t in allNodeTypes" :key="t" class="ge-checkbox">
-          <input
-            type="checkbox"
-            :id="`graph-filter-node-type-${t}`"
-            :value="t"
-            :checked="nodeTypeFilter.has(t)"
-            @change="onNodeTypeCheckbox"
-          />
-          {{ t }}
-        </label>
-      </fieldset>
-      <fieldset id="graph-filter-edge-type">
-        <legend>Edge types</legend>
-        <label v-for="t in allEdgeTypes" :key="t" class="ge-checkbox">
-          <input
-            type="checkbox"
-            :id="`graph-filter-edge-type-${t}`"
-            :value="t"
-            :checked="edgeTypeFilter.has(t)"
-            @change="onEdgeTypeCheckbox"
-          />
-          {{ t }}
-        </label>
-      </fieldset>
-      <label for="graph-lens" class="ge-label">Lens:</label>
-      <select id="graph-lens" :value="lens" @change="onLensChange">
-        <option value="all">All</option>
-        <option value="resources">Resources</option>
-        <option value="topics">Topics</option>
-        <option value="concepts">Concepts</option>
-        <option value="learn_chapters">Learn chapters</option>
-        <option value="review_pages">Review pages</option>
-      </select>
-      <label for="graph-layout" class="ge-label">Layout:</label>
-      <select id="graph-layout" :value="layoutName" @change="onLayoutChange">
-        <option value="cose">cose</option>
-        <option value="grid">grid</option>
-        <option value="circle">circle</option>
-        <option value="concentric">concentric</option>
-      </select>
-      <fieldset id="graph-path-finder-controls" class="ge-path-controls">
-        <legend>Path finder</legend>
-        <label for="graph-path-source" class="ge-label">Source:</label>
-        <select
-          id="graph-path-source"
-          :value="pathSourceId"
-          @change="onPathSourceChange"
-        >
-          <option value="">— pick a source node —</option>
-          <option v-for="n in pathNodeOptions" :key="`src-${n.id}`" :value="n.id">
-            {{ n.label }} &lt;{{ n.type }}&gt;
-          </option>
-        </select>
-        <label for="graph-path-target" class="ge-label">Target:</label>
-        <select
-          id="graph-path-target"
-          :value="pathTargetId"
-          @change="onPathTargetChange"
-        >
-          <option value="">— pick a target node —</option>
-          <option v-for="n in pathNodeOptions" :key="`dst-${n.id}`" :value="n.id">
-            {{ n.label }} &lt;{{ n.type }}&gt;
-          </option>
-        </select>
-        <button
-          id="graph-path-find"
-          type="button"
-          :disabled="!pathSourceId || !pathTargetId"
-          @click="runPathFinder"
-        >Find path</button>
-        <button
-          id="graph-path-clear"
-          type="button"
-          :disabled="pathStatus === 'idle' && !pathSourceId && !pathTargetId"
-          @click="clearPathFinder"
-        >Clear</button>
-      </fieldset>
-      <button
-        id="graph-copy-view-url"
-        type="button"
-        title="Copy a shareable URL with the current graph state"
-        @click="copyViewUrl"
-      >Copy view URL</button>
-      <button
-        id="graph-reset-url-state"
-        type="button"
-        title="Reset the graph URL state and clear URL query params"
-        @click="resetUrlState"
-      >Reset URL state</button>
-      <button
-        id="graph-neighborhood-mode"
-        type="button"
-        :data-state="neighborhoodMode ? 'on' : 'off'"
-        :disabled="!selectedNodeId"
-        :aria-disabled="!selectedNodeId ? 'true' : 'false'"
-        :title="selectedNodeId ? 'Toggle neighborhood mode' : 'Select a node to enable neighborhood mode'"
-        @click="toggleNeighborhoodMode"
-      >Neighborhood mode: {{ neighborhoodMode ? 'on' : 'off' }}</button>
-      <button
-        v-if="neighborhoodMode"
-        id="graph-neighborhood-exit"
-        type="button"
-        title="Exit neighborhood mode"
-        @click="exitNeighborhoodMode"
-      >Exit neighborhood</button>
-    </div>
+  <div class="graph-explorer" :class="{ 'graph-explorer-workspace': isWorkspaceMode }">
+    <div v-if="!isWorkspaceMode" id="graph-controls" class="ge-panel ge-controls">
+      <div class="ge-control-group ge-control-group-search">
+        <label for="graph-search" class="ge-label">Search nodes:</label>
+        <input
+          id="graph-search"
+          type="search"
+          placeholder="label, slug, or id"
+          :value="searchTerm"
+          @input="onSearchInput"
+        />
+      </div>
 
-    <div id="graph-dashboard" class="ge-dashboard" :data-state="dataState">
-      <h3>Insight dashboard</h3>
-      <div v-if="dataState === 'loading'" id="graph-dashboard-loading">
-        <em>Loading dashboard…</em>
+      <div class="ge-control-group ge-control-group-actions">
+        <button id="graph-zoom-in" type="button" title="Zoom in" @click="zoomIn">+ Zoom in</button>
+        <button id="graph-zoom-out" type="button" title="Zoom out" @click="zoomOut">− Zoom out</button>
+        <button id="graph-fit" type="button" title="Fit graph to viewport" @click="fitGraph">Fit graph</button>
+        <button id="graph-reset-zoom" type="button" title="Reset zoom to 1×" @click="resetZoom">Reset zoom</button>
+        <button
+          id="graph-show-all"
+          type="button"
+          :data-state="showAll ? 'all' : 'top'"
+          @click="toggleShowAll"
+        >{{ showAll ? 'Show top' : 'Show all' }}</button>
       </div>
-      <div v-else-if="dataState === 'error'" id="graph-dashboard-error">
-        <em>Dashboard unavailable (graph failed to load).</em>
+
+      <div class="ge-control-group ge-control-group-view">
+        <div class="ge-inline-select">
+          <label for="graph-lens" class="ge-label">Lens:</label>
+          <select id="graph-lens" :value="lens" @change="onLensChange">
+            <option value="all">All</option>
+            <option value="resources">Resources</option>
+            <option value="topics">Topics</option>
+            <option value="concepts">Concepts</option>
+            <option value="learn_chapters">Learn chapters</option>
+            <option value="review_pages">Review pages</option>
+          </select>
+        </div>
+        <div class="ge-inline-select">
+          <label for="graph-layout" class="ge-label">Layout:</label>
+          <select id="graph-layout" :value="layoutName" @change="onLayoutChange">
+            <option value="cose">cose</option>
+            <option value="grid">grid</option>
+            <option value="circle">circle</option>
+            <option value="concentric">concentric</option>
+          </select>
+        </div>
+        <button
+          id="graph-neighborhood-mode"
+          type="button"
+          :data-state="neighborhoodMode ? 'on' : 'off'"
+          :disabled="!selectedNodeId"
+          :aria-disabled="!selectedNodeId ? 'true' : 'false'"
+          :title="selectedNodeId ? 'Toggle neighborhood mode' : 'Select a node to enable neighborhood mode'"
+          @click="toggleNeighborhoodMode"
+        >Neighborhood mode: {{ neighborhoodMode ? 'on' : 'off' }}</button>
+        <button
+          v-if="neighborhoodMode"
+          id="graph-neighborhood-exit"
+          type="button"
+          title="Exit neighborhood mode"
+          @click="exitNeighborhoodMode"
+        >Exit neighborhood</button>
       </div>
-      <div v-else id="graph-dashboard-body">
-        <ul class="ge-stats">
-          <li>
-            <span class="ge-stat-label">Total nodes:</span>
-            <span id="graph-stat-total-nodes" class="ge-stat-value">{{ totalNodeCount }}</span>
-          </li>
-          <li>
-            <span class="ge-stat-label">Total edges:</span>
-            <span id="graph-stat-total-edges" class="ge-stat-value">{{ totalEdgeCount }}</span>
-          </li>
-          <li>
-            <span class="ge-stat-label">Visible nodes:</span>
-            <span id="graph-stat-visible-nodes" class="ge-stat-value">{{ visibleNodeCount }}</span>
-          </li>
-          <li>
-            <span class="ge-stat-label">Visible edges:</span>
-            <span id="graph-stat-visible-edges" class="ge-stat-value">{{ visibleEdgeCount }}</span>
-          </li>
-          <li>
-            <span class="ge-stat-label">Selected:</span>
-            <span id="graph-stat-selected" class="ge-stat-value" :data-selected-id="selectedNodeId || ''">{{ selectedDisplay }}</span>
-          </li>
-        </ul>
-        <h4>Top connected nodes</h4>
-        <ol id="graph-stat-top-nodes" :data-count="topConnectedNodes.length">
-          <li
-            v-for="entry in topConnectedNodes"
-            :key="entry.node.id"
-            :data-node-id="entry.node.id"
-            :data-degree="entry.degree"
+
+      <div class="ge-control-group ge-control-group-filters">
+        <fieldset id="graph-filter-node-type">
+          <legend>Node types</legend>
+          <label v-for="t in allNodeTypes" :key="t" class="ge-checkbox">
+            <input
+              type="checkbox"
+              :id="`graph-filter-node-type-${t}`"
+              :value="t"
+              :checked="nodeTypeFilter.has(t)"
+              @change="onNodeTypeCheckbox"
+            />
+            {{ t }}
+          </label>
+        </fieldset>
+        <fieldset id="graph-filter-edge-type">
+          <legend>Edge types</legend>
+          <label v-for="t in allEdgeTypes" :key="t" class="ge-checkbox">
+            <input
+              type="checkbox"
+              :id="`graph-filter-edge-type-${t}`"
+              :value="t"
+              :checked="edgeTypeFilter.has(t)"
+              @change="onEdgeTypeCheckbox"
+            />
+            {{ t }}
+          </label>
+        </fieldset>
+      </div>
+
+      <div class="ge-control-group ge-control-group-path">
+        <fieldset id="graph-path-finder-controls" class="ge-path-controls">
+          <legend>Path finder</legend>
+          <label for="graph-path-source" class="ge-label">Source:</label>
+          <select
+            id="graph-path-source"
+            :value="pathSourceId"
+            @change="onPathSourceChange"
           >
-            <button
-              type="button"
-              class="gn-pick"
-              :data-node-id="entry.node.id"
-              @click="pickNeighbor(entry.node.id)"
-            >
-              <span class="gn-type">{{ entry.node.type }}</span>
-              <span class="gn-label">{{ entry.node.label || entry.node.id }}</span>
-              <small>(degree: {{ entry.degree }})</small>
-            </button>
-          </li>
-        </ol>
-        <p v-if="neighborhoodMode && !selectedNodeId" id="graph-neighborhood-empty-message">
-          <em>Neighborhood mode is on, but no node is selected. Select a node in the canvas or the list to focus the closed neighbourhood.</em>
-        </p>
-      </div>
-    </div>
-
-    <div
-      id="graph-path-result"
-      class="ge-path-result"
-      :data-status="pathStatus"
-    >
-      <h3>Path finder</h3>
-      <p id="graph-path-status" class="ge-path-status">
-        <template v-if="pathStatus === 'idle' || pathStatus === 'missing_input'">
-          <em>Pick a source and a target node, then click <strong>Find path</strong>.</em>
-        </template>
-        <template v-else-if="pathStatus === 'same_node'">
-          Source and target are the same node
-          (<strong>{{ pathSourceId }}</strong>). No traversal needed.
-        </template>
-        <template v-else-if="pathStatus === 'not_found'">
-          <em>No path found between the chosen nodes
-          (with the current edge-type filter).</em>
-        </template>
-        <template v-else-if="pathStatus === 'found'">
-          Path from <strong>{{ pathSourceId }}</strong>
-          to <strong>{{ pathTargetId }}</strong>:
-          <span id="graph-path-hops">{{ pathNodeIds.length - 1 }}</span> hop(s),
-          <span id="graph-path-node-count">{{ pathNodeIds.length }}</span> node(s),
-          <span id="graph-path-edge-count">{{ pathEdgeIds.length }}</span> edge(s).
-        </template>
-      </p>
-      <ol
-        v-if="pathStatus === 'found'"
-        id="graph-path-steps"
-        :data-count="pathSteps.length"
-      >
-        <li
-          v-for="(s, i) in pathSteps"
-          :key="`${s.edgeId}-${i}`"
-          class="ge-path-step"
-          :data-from-id="s.fromId"
-          :data-edge-id="s.edgeId"
-          :data-to-id="s.toId"
-          :data-edge-type="s.edgeType"
-        >
-          <code class="ge-path-step-from">{{ s.fromLabel }}</code>
-          <span class="ge-path-step-arrow"> --{{ s.edgeType }}--> </span>
-          <code class="ge-path-step-to">{{ s.toLabel }}</code>
-        </li>
-      </ol>
-    </div>
-
-    <div id="graph-canvas" ref="canvasRef" class="ge-canvas"></div>
-
-    <div id="graph-list-pane" class="ge-list-pane">
-      <h3>Nodes</h3>
-      <div id="graph-node-list" :data-count="visibleNodeList.length">
-        <p v-if="!visibleNodeList.length"><em>No matching nodes.</em></p>
-        <div
-          v-for="n in visibleNodeList.slice(0, 200)"
-          :key="n.id"
-          class="gn-row"
-          :class="{ 'gn-row-selected': selectedNodeId === n.id }"
-          :data-node-id="n.id"
-        >
+            <option value="">— pick a source node —</option>
+            <option v-for="n in pathNodeOptions" :key="`src-${n.id}`" :value="n.id">
+              {{ n.label }} &lt;{{ n.type }}&gt;
+            </option>
+          </select>
+          <label for="graph-path-target" class="ge-label">Target:</label>
+          <select
+            id="graph-path-target"
+            :value="pathTargetId"
+            @change="onPathTargetChange"
+          >
+            <option value="">— pick a target node —</option>
+            <option v-for="n in pathNodeOptions" :key="`dst-${n.id}`" :value="n.id">
+              {{ n.label }} &lt;{{ n.type }}&gt;
+            </option>
+          </select>
           <button
+            id="graph-path-find"
             type="button"
-            class="gn-pick"
-            :data-node-id="n.id"
-            @click="pickNeighbor(n.id)"
-          >
-            <span class="gn-type">{{ n.type }}</span>
-            <span class="gn-label">{{ n.label || n.id }}</span>
-          </button>
-        </div>
+            :disabled="!pathSourceId || !pathTargetId"
+            @click="runPathFinder"
+          >Find path</button>
+          <button
+            id="graph-path-clear"
+            type="button"
+            :disabled="pathStatus === 'idle' && !pathSourceId && !pathTargetId"
+            @click="clearPathFinder"
+          >Clear</button>
+        </fieldset>
+      </div>
+
+      <div class="ge-control-group ge-control-group-share">
+        <button
+          id="graph-copy-view-url"
+          type="button"
+          title="Copy a shareable URL with the current graph state"
+          @click="copyViewUrl"
+        >Copy view URL</button>
+        <button
+          id="graph-reset-url-state"
+          type="button"
+          title="Reset the graph URL state and clear URL query params"
+          @click="resetUrlState"
+        >Reset URL state</button>
       </div>
     </div>
 
-    <div id="graph-details-pane" class="ge-details-pane">
-      <h3>Details</h3>
-      <div id="graph-details">
-        <p v-if="!selectedNode && !selectedEdge"><em>Select a node or edge to see its details.</em></p>
-        <div v-else-if="selectedNode">
-          <h4>{{ selectedNode.label || selectedNode.id }}</h4>
-          <p>
-            <strong>ID:</strong> <code>{{ selectedNode.id }}</code><br />
-            <strong>Type:</strong> {{ selectedNode.type }}<br />
-            <strong>Slug:</strong> {{ selectedNode.slug || '' }}
+    <div class="ge-workspace">
+      <div class="ge-main-column">
+        <div id="graph-canvas" ref="canvasRef" class="ge-panel ge-canvas"></div>
+
+        <div
+          id="graph-path-result"
+          class="ge-panel ge-path-result"
+          :data-status="pathStatus"
+        >
+          <h3>Path finder</h3>
+          <p id="graph-path-status" class="ge-path-status">
+            <template v-if="pathStatus === 'idle' || pathStatus === 'missing_input'">
+              <em>Pick a source and a target node, then click <strong>Find path</strong>.</em>
+            </template>
+            <template v-else-if="pathStatus === 'same_node'">
+              Source and target are the same node
+              (<strong>{{ pathSourceId }}</strong>). No traversal needed.
+            </template>
+            <template v-else-if="pathStatus === 'not_found'">
+              <em>No path found between the chosen nodes
+              (with the current edge-type filter).</em>
+            </template>
+            <template v-else-if="pathStatus === 'found'">
+              Path from <strong>{{ pathSourceId }}</strong>
+              to <strong>{{ pathTargetId }}</strong>:
+              <span id="graph-path-hops">{{ pathNodeIds.length - 1 }}</span> hop(s),
+              <span id="graph-path-node-count">{{ pathNodeIds.length }}</span> node(s),
+              <span id="graph-path-edge-count">{{ pathEdgeIds.length }}</span> edge(s).
+            </template>
           </p>
-          <p>
-            <strong>Incoming edges:</strong>
-            <span id="graph-stat-incoming" :data-selected-id="selectedNode.id">{{ selectedIncomingCount }}</span><br />
-            <strong>Outgoing edges:</strong>
-            <span id="graph-stat-outgoing" :data-selected-id="selectedNode.id">{{ selectedOutgoingCount }}</span><br />
-            <strong>Total degree:</strong>
-            <span id="graph-stat-degree" :data-selected-id="selectedNode.id">{{ selectedDegree }}</span>
-          </p>
-          <p>
-            <button
-              id="graph-copy-node-id"
-              type="button"
-              :data-selected-id="selectedNode.id"
-              title="Copy selected node id to clipboard"
-              @click="copySelectedId"
-            >Copy node id</button>
-          </p>
-          <p v-if="nodeRoute(selectedNode)">
-            Open in wiki:
-            <a :href="nodeRoute(selectedNode) || '#'">{{ nodeRoute(selectedNode) }}</a>
-          </p>
-          <h5>Metadata</h5>
-          <table v-if="Object.keys(selectedNode.metadata || {}).length">
-            <tr v-for="(v, k) in (selectedNode.metadata || {})" :key="String(k)">
-              <td>{{ String(k) }}</td>
-              <td>{{ String(v) }}</td>
-            </tr>
-          </table>
-          <p v-else><em>No metadata.</em></p>
+          <ol
+            v-if="pathStatus === 'found'"
+            id="graph-path-steps"
+            :data-count="pathSteps.length"
+          >
+            <li
+              v-for="(s, i) in pathSteps"
+              :key="`${s.edgeId}-${i}`"
+              class="ge-path-step"
+              :data-from-id="s.fromId"
+              :data-edge-id="s.edgeId"
+              :data-to-id="s.toId"
+              :data-edge-type="s.edgeType"
+            >
+              <code class="ge-path-step-from">{{ s.fromLabel }}</code>
+              <span class="ge-path-step-arrow"> --{{ s.edgeType }}--> </span>
+              <code class="ge-path-step-to">{{ s.toLabel }}</code>
+            </li>
+          </ol>
         </div>
-        <div v-else-if="selectedEdge">
-          <h4>Edge</h4>
-          <p>
-            <strong>ID:</strong> <code>{{ selectedEdge.id }}</code><br />
-            <strong>Type:</strong> {{ selectedEdge.type }}<br />
-            <strong>From:</strong> {{ selectedEdge.source }}<br />
-            <strong>To:</strong> {{ selectedEdge.target }}
-          </p>
-          <h5>Metadata</h5>
-          <table v-if="Object.keys(selectedEdge.metadata || {}).length">
-            <tr v-for="(v, k) in (selectedEdge.metadata || {})" :key="String(k)">
-              <td>{{ String(k) }}</td>
-              <td>{{ String(v) }}</td>
-            </tr>
-          </table>
-          <p v-else><em>No metadata.</em></p>
+
+        <div id="graph-dashboard" class="ge-panel ge-dashboard" :data-state="dataState">
+          <h3>Insight dashboard</h3>
+          <div v-if="dataState === 'loading'" id="graph-dashboard-loading">
+            <em>Loading dashboard…</em>
+          </div>
+          <div v-else-if="dataState === 'error'" id="graph-dashboard-error">
+            <em>Dashboard unavailable (graph failed to load).</em>
+          </div>
+          <div v-else id="graph-dashboard-body">
+            <ul class="ge-stats">
+              <li>
+                <span class="ge-stat-label">Total nodes:</span>
+                <span id="graph-stat-total-nodes" class="ge-stat-value">{{ totalNodeCount }}</span>
+              </li>
+              <li>
+                <span class="ge-stat-label">Total edges:</span>
+                <span id="graph-stat-total-edges" class="ge-stat-value">{{ totalEdgeCount }}</span>
+              </li>
+              <li>
+                <span class="ge-stat-label">Visible nodes:</span>
+                <span id="graph-stat-visible-nodes" class="ge-stat-value">{{ visibleNodeCount }}</span>
+              </li>
+              <li>
+                <span class="ge-stat-label">Visible edges:</span>
+                <span id="graph-stat-visible-edges" class="ge-stat-value">{{ visibleEdgeCount }}</span>
+              </li>
+              <li>
+                <span class="ge-stat-label">Selected:</span>
+                <span id="graph-stat-selected" class="ge-stat-value" :data-selected-id="selectedNodeId || ''">{{ selectedDisplay }}</span>
+              </li>
+            </ul>
+            <h4>Top connected nodes</h4>
+            <ol id="graph-stat-top-nodes" :data-count="topConnectedNodes.length">
+              <li
+                v-for="entry in topConnectedNodes"
+                :key="entry.node.id"
+                :data-node-id="entry.node.id"
+                :data-degree="entry.degree"
+              >
+                <button
+                  type="button"
+                  class="gn-pick"
+                  :data-node-id="entry.node.id"
+                  @click="pickNeighbor(entry.node.id)"
+                >
+                  <span class="gn-type">{{ entry.node.type }}</span>
+                  <span class="gn-label">{{ entry.node.label || entry.node.id }}</span>
+                  <small>(degree: {{ entry.degree }})</small>
+                </button>
+              </li>
+            </ol>
+            <p v-if="neighborhoodMode && !selectedNodeId" id="graph-neighborhood-empty-message">
+              <em>Neighborhood mode is on, but no node is selected. Select a node in the canvas or the list to focus the closed neighbourhood.</em>
+            </p>
+          </div>
         </div>
       </div>
 
-      <h3>Neighbors</h3>
-      <div id="graph-neighbors">
-        <p v-if="!selectedNode"><em>No node selected.</em></p>
-        <p v-else-if="!neighborList.length"><em>No neighbors.</em></p>
-        <ul v-else>
-          <li v-for="(item, i) in neighborList.slice(0, 200)" :key="i">
-            {{ item.direction }}:
-            <button
-              type="button"
-              class="gn-pick"
-              :data-node-id="item.neighbor ? item.neighbor.id : ''"
-              @click="item.neighbor && pickNeighbor(item.neighbor.id)"
-            >{{ item.neighbor ? (item.neighbor.label || item.neighbor.id) : '?' }}</button>
-            <small>({{ item.edge.type }})</small>
-          </li>
-        </ul>
-      </div>
+      <div class="ge-side-column">
+        <div v-if="isWorkspaceMode" id="graph-controls" class="ge-panel ge-controls">
+          <div class="ge-control-group ge-control-group-search">
+            <label for="graph-search" class="ge-label">Search nodes:</label>
+            <input
+              id="graph-search"
+              type="search"
+              placeholder="label, slug, or id"
+              :value="searchTerm"
+              @input="onSearchInput"
+            />
+          </div>
 
-      <h3>Edges</h3>
-      <div id="graph-edges">
-        <p v-if="!selectedNode"><em>No node selected.</em></p>
-        <p v-else-if="!neighborList.length"><em>No edges.</em></p>
-        <ul v-else>
-          <li v-for="(item, i) in neighborList.slice(0, 200)" :key="`e-${i}`">
-            <code>{{ item.edge.id }}</code>
-            <small v-if="Object.keys(item.edge.metadata || {}).length">
-              <span v-for="(v, k) in (item.edge.metadata || {})" :key="String(k)">
-                {{ String(k) }}={{ String(v) }}&nbsp;
-              </span>
-            </small>
-          </li>
-        </ul>
+          <div class="ge-control-group ge-control-group-actions">
+            <button id="graph-zoom-in" type="button" title="Zoom in" @click="zoomIn">+ Zoom in</button>
+            <button id="graph-zoom-out" type="button" title="Zoom out" @click="zoomOut">− Zoom out</button>
+            <button id="graph-fit" type="button" title="Fit graph to viewport" @click="fitGraph">Fit graph</button>
+            <button id="graph-reset-zoom" type="button" title="Reset zoom to 1×" @click="resetZoom">Reset zoom</button>
+            <button
+              id="graph-show-all"
+              type="button"
+              :data-state="showAll ? 'all' : 'top'"
+              @click="toggleShowAll"
+            >{{ showAll ? 'Show top' : 'Show all' }}</button>
+          </div>
+
+          <div class="ge-control-group ge-control-group-view">
+            <div class="ge-inline-select">
+              <label for="graph-lens" class="ge-label">Lens:</label>
+              <select id="graph-lens" :value="lens" @change="onLensChange">
+                <option value="all">All</option>
+                <option value="resources">Resources</option>
+                <option value="topics">Topics</option>
+                <option value="concepts">Concepts</option>
+                <option value="learn_chapters">Learn chapters</option>
+                <option value="review_pages">Review pages</option>
+              </select>
+            </div>
+            <div class="ge-inline-select">
+              <label for="graph-layout" class="ge-label">Layout:</label>
+              <select id="graph-layout" :value="layoutName" @change="onLayoutChange">
+                <option value="cose">cose</option>
+                <option value="grid">grid</option>
+                <option value="circle">circle</option>
+                <option value="concentric">concentric</option>
+              </select>
+            </div>
+            <button
+              id="graph-neighborhood-mode"
+              type="button"
+              :data-state="neighborhoodMode ? 'on' : 'off'"
+              :disabled="!selectedNodeId"
+              :aria-disabled="!selectedNodeId ? 'true' : 'false'"
+              :title="selectedNodeId ? 'Toggle neighborhood mode' : 'Select a node to enable neighborhood mode'"
+              @click="toggleNeighborhoodMode"
+            >Neighborhood mode: {{ neighborhoodMode ? 'on' : 'off' }}</button>
+            <button
+              v-if="neighborhoodMode"
+              id="graph-neighborhood-exit"
+              type="button"
+              title="Exit neighborhood mode"
+              @click="exitNeighborhoodMode"
+            >Exit neighborhood</button>
+          </div>
+
+          <details class="ge-disclosure" open>
+            <summary>Filters</summary>
+            <div class="ge-control-group ge-control-group-filters">
+              <fieldset id="graph-filter-node-type">
+                <legend>Node types</legend>
+                <label v-for="t in allNodeTypes" :key="t" class="ge-checkbox">
+                  <input
+                    type="checkbox"
+                    :id="`graph-filter-node-type-${t}`"
+                    :value="t"
+                    :checked="nodeTypeFilter.has(t)"
+                    @change="onNodeTypeCheckbox"
+                  />
+                  {{ t }}
+                </label>
+              </fieldset>
+              <fieldset id="graph-filter-edge-type">
+                <legend>Edge types</legend>
+                <label v-for="t in allEdgeTypes" :key="t" class="ge-checkbox">
+                  <input
+                    type="checkbox"
+                    :id="`graph-filter-edge-type-${t}`"
+                    :value="t"
+                    :checked="edgeTypeFilter.has(t)"
+                    @change="onEdgeTypeCheckbox"
+                  />
+                  {{ t }}
+                </label>
+              </fieldset>
+            </div>
+          </details>
+
+          <details class="ge-disclosure" open>
+            <summary>Path finder</summary>
+            <div class="ge-control-group ge-control-group-path">
+              <fieldset id="graph-path-finder-controls" class="ge-path-controls">
+                <legend>Path finder</legend>
+                <label for="graph-path-source" class="ge-label">Source:</label>
+                <select
+                  id="graph-path-source"
+                  :value="pathSourceId"
+                  @change="onPathSourceChange"
+                >
+                  <option value="">— pick a source node —</option>
+                  <option v-for="n in pathNodeOptions" :key="`src-${n.id}`" :value="n.id">
+                    {{ n.label }} &lt;{{ n.type }}&gt;
+                  </option>
+                </select>
+                <label for="graph-path-target" class="ge-label">Target:</label>
+                <select
+                  id="graph-path-target"
+                  :value="pathTargetId"
+                  @change="onPathTargetChange"
+                >
+                  <option value="">— pick a target node —</option>
+                  <option v-for="n in pathNodeOptions" :key="`dst-${n.id}`" :value="n.id">
+                    {{ n.label }} &lt;{{ n.type }}&gt;
+                  </option>
+                </select>
+                <button
+                  id="graph-path-find"
+                  type="button"
+                  :disabled="!pathSourceId || !pathTargetId"
+                  @click="runPathFinder"
+                >Find path</button>
+                <button
+                  id="graph-path-clear"
+                  type="button"
+                  :disabled="pathStatus === 'idle' && !pathSourceId && !pathTargetId"
+                  @click="clearPathFinder"
+                >Clear</button>
+              </fieldset>
+            </div>
+          </details>
+
+          <div class="ge-control-group ge-control-group-share">
+            <button
+              id="graph-copy-view-url"
+              type="button"
+              title="Copy a shareable URL with the current graph state"
+              @click="copyViewUrl"
+            >Copy view URL</button>
+            <button
+              id="graph-reset-url-state"
+              type="button"
+              title="Reset the graph URL state and clear URL query params"
+              @click="resetUrlState"
+            >Reset URL state</button>
+          </div>
+        </div>
+
+        <div id="graph-list-pane" class="ge-panel ge-list-pane">
+          <h3>Nodes</h3>
+          <div id="graph-node-list" :data-count="visibleNodeList.length">
+            <p v-if="!visibleNodeList.length"><em>No matching nodes.</em></p>
+            <div
+              v-for="n in visibleNodeList.slice(0, 200)"
+              :key="n.id"
+              class="gn-row"
+              :class="{ 'gn-row-selected': selectedNodeId === n.id }"
+              :data-node-id="n.id"
+            >
+              <button
+                type="button"
+                class="gn-pick"
+                :data-node-id="n.id"
+                @click="pickNeighbor(n.id)"
+              >
+                <span class="gn-type">{{ n.type }}</span>
+                <span class="gn-label">{{ n.label || n.id }}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div id="graph-details-pane" class="ge-panel ge-details-pane">
+          <h3>Details</h3>
+          <div id="graph-details">
+            <p v-if="!selectedNode && !selectedEdge"><em>Select a node or edge to see its details.</em></p>
+            <div v-else-if="selectedNode">
+              <h4>{{ selectedNode.label || selectedNode.id }}</h4>
+              <p class="ge-kv-block">
+                <strong>ID:</strong> <code>{{ selectedNode.id }}</code><br />
+                <strong>Type:</strong> {{ selectedNode.type }}<br />
+                <strong>Slug:</strong> {{ selectedNode.slug || '' }}
+              </p>
+              <p class="ge-kv-block">
+                <strong>Incoming edges:</strong>
+                <span id="graph-stat-incoming" :data-selected-id="selectedNode.id">{{ selectedIncomingCount }}</span><br />
+                <strong>Outgoing edges:</strong>
+                <span id="graph-stat-outgoing" :data-selected-id="selectedNode.id">{{ selectedOutgoingCount }}</span><br />
+                <strong>Total degree:</strong>
+                <span id="graph-stat-degree" :data-selected-id="selectedNode.id">{{ selectedDegree }}</span>
+              </p>
+              <p class="ge-action-row">
+                <button
+                  id="graph-copy-node-id"
+                  type="button"
+                  :data-selected-id="selectedNode.id"
+                  title="Copy selected node id to clipboard"
+                  @click="copySelectedId"
+                >Copy node id</button>
+              </p>
+              <p v-if="nodeRoute(selectedNode)" class="ge-link-row">
+                Open in wiki:
+                <a :href="nodeRoute(selectedNode) || '#'">{{ nodeRoute(selectedNode) }}</a>
+              </p>
+              <h5>Metadata</h5>
+              <table v-if="Object.keys(selectedNode.metadata || {}).length" class="ge-metadata-table">
+                <tr v-for="(v, k) in (selectedNode.metadata || {})" :key="String(k)">
+                  <td>{{ String(k) }}</td>
+                  <td>{{ String(v) }}</td>
+                </tr>
+              </table>
+              <p v-else><em>No metadata.</em></p>
+            </div>
+            <div v-else-if="selectedEdge">
+              <h4>Edge</h4>
+              <p class="ge-kv-block">
+                <strong>ID:</strong> <code>{{ selectedEdge.id }}</code><br />
+                <strong>Type:</strong> {{ selectedEdge.type }}<br />
+                <strong>From:</strong> {{ selectedEdge.source }}<br />
+                <strong>To:</strong> {{ selectedEdge.target }}
+              </p>
+              <h5>Metadata</h5>
+              <table v-if="Object.keys(selectedEdge.metadata || {}).length" class="ge-metadata-table">
+                <tr v-for="(v, k) in (selectedEdge.metadata || {})" :key="String(k)">
+                  <td>{{ String(k) }}</td>
+                  <td>{{ String(v) }}</td>
+                </tr>
+              </table>
+              <p v-else><em>No metadata.</em></p>
+            </div>
+          </div>
+
+          <h3>Neighbors</h3>
+          <div id="graph-neighbors" class="ge-scroll-box">
+            <p v-if="!selectedNode"><em>No node selected.</em></p>
+            <p v-else-if="!neighborList.length"><em>No neighbors.</em></p>
+            <ul v-else>
+              <li v-for="(item, i) in neighborList.slice(0, 200)" :key="i">
+                <span class="ge-inline-meta">{{ item.direction }}:</span>
+                <button
+                  type="button"
+                  class="gn-pick"
+                  :data-node-id="item.neighbor ? item.neighbor.id : ''"
+                  @click="item.neighbor && pickNeighbor(item.neighbor.id)"
+                >{{ item.neighbor ? (item.neighbor.label || item.neighbor.id) : '?' }}</button>
+                <small>({{ item.edge.type }})</small>
+              </li>
+            </ul>
+          </div>
+
+          <h3>Edges</h3>
+          <div id="graph-edges" class="ge-scroll-box">
+            <p v-if="!selectedNode"><em>No node selected.</em></p>
+            <p v-else-if="!neighborList.length"><em>No edges.</em></p>
+            <ul v-else>
+              <li v-for="(item, i) in neighborList.slice(0, 200)" :key="`e-${i}`">
+                <code>{{ item.edge.id }}</code>
+                <small v-if="Object.keys(item.edge.metadata || {}).length">
+                  <span v-for="(v, k) in (item.edge.metadata || {})" :key="String(k)">
+                    {{ String(k) }}={{ String(v) }}&nbsp;
+                  </span>
+                </small>
+              </li>
+            </ul>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -2086,20 +2302,41 @@ const selectedDisplay = computed<string>(() => {
 
 <style scoped>
 .graph-explorer {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: 1rem;
+  width: 100%;
+  max-width: 100%;
+}
+.ge-panel {
+  border: 1px solid var(--vp-c-divider, #ddd);
+  border-radius: 8px;
+  background: var(--vp-c-bg-soft, #fafafa);
+  min-width: 0;
 }
 .ge-controls {
-  flex: 1 1 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.85rem;
+  padding: 0.85rem;
+}
+.ge-control-group {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: 0.65rem;
   align-items: center;
-  padding: 0.5rem;
-  border: 1px solid var(--vp-c-divider, #ddd);
-  border-radius: 6px;
-  background: var(--vp-c-bg-soft, #fafafa);
+  min-width: 0;
+  max-width: 100%;
+}
+.ge-controls > * {
+  min-width: 0;
+  max-width: 100%;
+}
+.ge-control-group-search input {
+  flex: 1 1 260px;
+  max-width: 100%;
+}
+.ge-control-group-search {
+  width: 100%;
 }
 .ge-label {
   font-weight: 600;
@@ -2109,19 +2346,27 @@ const selectedDisplay = computed<string>(() => {
   border: 1px solid var(--vp-c-divider, #ccc);
   border-radius: 4px;
   min-width: 240px;
+  box-sizing: border-box;
 }
 .ge-controls button {
-  padding: 0.3rem 0.7rem;
+  padding: 0.45rem 0.75rem;
   border: 1px solid var(--vp-c-divider, #ccc);
   border-radius: 4px;
   background: var(--vp-c-bg, #fff);
   cursor: pointer;
+  font: inherit;
+  box-sizing: border-box;
 }
 .ge-controls fieldset {
   border: 1px solid var(--vp-c-divider, #ccc);
   border-radius: 4px;
   padding: 0.25rem 0.5rem;
   margin: 0;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.85rem;
+  align-items: flex-start;
 }
 .ge-controls legend {
   font-weight: 600;
@@ -2133,17 +2378,55 @@ const selectedDisplay = computed<string>(() => {
   border-radius: 4px;
   background: var(--vp-c-bg, #fff);
   cursor: pointer;
+  box-sizing: border-box;
+}
+.ge-inline-select {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
 }
 .ge-controls button[disabled] {
   opacity: 0.5;
   cursor: not-allowed;
 }
-.ge-dashboard {
-  flex: 1 1 100%;
-  border: 1px solid var(--vp-c-divider, #ddd);
+.ge-control-group-filters {
+  align-items: stretch;
+}
+.ge-disclosure {
+  border: 1px solid var(--vp-c-divider, #ccc);
   border-radius: 6px;
-  padding: 0.5rem 0.75rem;
-  background: var(--vp-c-bg-soft, #fafafa);
+  padding: 0.1rem 0.55rem 0.55rem;
+  background: var(--vp-c-bg, #fff);
+}
+.ge-disclosure summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 0.45rem 0 0.3rem;
+}
+#graph-filter-node-type,
+#graph-filter-edge-type {
+  flex: 1 1 320px;
+  max-height: 10rem;
+  overflow: auto;
+}
+.ge-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(300px, 0.9fr);
+  gap: 1rem;
+  min-width: 0;
+}
+.ge-main-column,
+.ge-side-column {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+.graph-explorer-workspace .ge-workspace {
+  grid-template-columns: minmax(0, 1.8fr) minmax(320px, 0.95fr);
+}
+.ge-dashboard {
+  padding: 0.85rem 1rem;
 }
 .ge-dashboard h3 {
   margin: 0 0 0.4rem;
@@ -2176,11 +2459,13 @@ const selectedDisplay = computed<string>(() => {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .ge-canvas {
-  flex: 1 1 100%;
   height: 640px;
-  min-height: 600px;
+  min-height: 520px;
   border: 2px solid var(--vp-c-divider, #ccc);
   background: #fcfcfc;
   border-radius: 6px;
@@ -2189,17 +2474,15 @@ const selectedDisplay = computed<string>(() => {
 }
 .ge-list-pane,
 .ge-details-pane {
-  flex: 1 1 320px;
-  border: 1px solid var(--vp-c-divider, #ddd);
-  border-radius: 6px;
-  padding: 0.5rem 0.75rem;
-  background: var(--vp-c-bg-soft, #fafafa);
+  padding: 0.85rem 1rem;
 }
 .gn-row {
   margin-bottom: 0.15rem;
 }
 .gn-row-selected button {
   font-weight: 700;
+  background: color-mix(in srgb, var(--vp-c-brand-soft) 55%, var(--vp-c-bg));
+  border-radius: 6px;
 }
 .gn-pick {
   background: transparent;
@@ -2209,6 +2492,7 @@ const selectedDisplay = computed<string>(() => {
   padding: 0.15rem 0.25rem;
   width: 100%;
   font: inherit;
+  white-space: normal;
 }
 .gn-pick:hover {
   background: var(--vp-c-bg, #fff);
@@ -2224,12 +2508,13 @@ const selectedDisplay = computed<string>(() => {
 .ge-path-controls {
   border: 1px solid var(--vp-c-divider, #ccc);
   border-radius: 4px;
-  padding: 0.25rem 0.5rem;
+  padding: 0.45rem 0.55rem;
   margin: 0;
-  display: inline-flex;
+  display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.4rem;
+  width: 100%;
 }
 .ge-path-controls legend {
   font-weight: 600;
@@ -2242,23 +2527,25 @@ const selectedDisplay = computed<string>(() => {
   background: var(--vp-c-bg, #fff);
   cursor: pointer;
   min-width: 180px;
-  max-width: 260px;
+  max-width: 320px;
 }
 .ge-path-controls button[disabled] {
   opacity: 0.5;
   cursor: not-allowed;
 }
 .ge-path-result {
-  flex: 1 1 100%;
   border: 1px solid #1976d2;
   border-left-width: 4px;
   border-radius: 6px;
-  padding: 0.5rem 0.75rem;
-  background: var(--vp-c-bg-soft, #fafafa);
+  padding: 0.85rem 1rem;
 }
 .ge-path-result h3 {
   margin: 0 0 0.4rem;
   color: #1976d2;
+}
+.ge-path-result[data-status='found'],
+.ge-path-result[data-status='same_node'] {
+  background: color-mix(in srgb, #1976d2 8%, var(--vp-c-bg-soft));
 }
 .ge-path-status {
   margin: 0 0 0.5rem;
@@ -2276,10 +2563,97 @@ const selectedDisplay = computed<string>(() => {
   padding: 0 0.25rem;
   border-radius: 3px;
   font-size: 0.85em;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .ge-path-step-arrow {
   color: #1976d2;
   font-weight: 600;
   margin: 0 0.25rem;
+}
+.ge-kv-block,
+.ge-link-row,
+#graph-neighbors li,
+#graph-edges li,
+#graph-details code,
+#graph-edges code,
+.gn-label,
+.ge-inline-meta,
+.ge-metadata-table td {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.ge-action-row {
+  margin: 0.75rem 0;
+}
+.ge-metadata-table {
+  width: 100%;
+  table-layout: fixed;
+}
+.ge-metadata-table td {
+  vertical-align: top;
+}
+#graph-node-list,
+#graph-neighbors,
+#graph-edges {
+  max-height: 18rem;
+  overflow: auto;
+}
+#graph-details {
+  margin-bottom: 1rem;
+}
+.ge-scroll-box ul,
+#graph-stat-top-nodes {
+  max-height: 16rem;
+  overflow: auto;
+}
+@media (max-width: 960px) {
+  .ge-workspace,
+  .graph-explorer-workspace .ge-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ge-control-group {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .ge-controls input[type='search'],
+  .ge-controls select,
+  .ge-controls button,
+  .ge-inline-select,
+  .ge-path-controls select {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+  .ge-inline-select {
+    display: flex;
+  }
+  .ge-control-group-search input {
+    flex: none;
+  }
+  .ge-path-controls {
+    width: 100%;
+  }
+  #graph-filter-node-type,
+  #graph-filter-edge-type {
+    flex: none;
+    width: 100%;
+    max-width: 100%;
+  }
+  .ge-canvas {
+    min-height: 420px;
+    height: 520px;
+  }
+  #graph-node-list,
+  #graph-neighbors,
+  #graph-edges,
+  .ge-scroll-box ul,
+  #graph-stat-top-nodes,
+  #graph-filter-node-type,
+  #graph-filter-edge-type {
+    max-height: 14rem;
+  }
 }
 </style>

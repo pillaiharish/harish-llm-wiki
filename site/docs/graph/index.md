@@ -1,45 +1,97 @@
+---
+pageClass: graph-landing-page
+---
+
 # Knowledge Graph
 
-The wiki exposes a deterministic knowledge graph as JSON for future
-RAG, search, and visualization features.
+The graph turns the wiki into a connected map of **resources**,
+**topics**, **concepts**, and **review pages**. It is deterministic,
+fully static, and designed to make relationships inspectable without
+a backend service.
+
+<div class="graph-cta-grid">
+  <a class="graph-cta-card graph-cta-card-primary" href="/graph/explore">
+    <strong>Open Interactive Graph</strong>
+    <span>Launch the full graph workspace with filters, path-finding, and node inspection.</span>
+  </a>
+  <a class="graph-cta-card" href="/graph/viewer">
+    <strong>View Technical Reference</strong>
+    <span>Open the compatibility viewer with provenance notes, JSON links, and runtime details.</span>
+  </a>
+  <a class="graph-cta-card" href="/graph/resource-relationships">
+    <strong>View Resource Relationships</strong>
+    <span>Review deterministic resource-to-resource relationships and jump into the graph workspace.</span>
+  </a>
+  <a class="graph-cta-card" href="/graph/knowledge_graph.json">
+    <strong>View Graph JSON/Data</strong>
+    <span>Browse the generated graph bundle and supporting node/edge exports.</span>
+  </a>
+</div>
+
+## At a Glance
+
+<div class="graph-stat-grid">
+  <div class="graph-stat-card"><span class="graph-stat-kicker">Nodes</span><strong>65</strong><span>Entities currently in the graph.</span></div>
+  <div class="graph-stat-card"><span class="graph-stat-kicker">Edges</span><strong>1069</strong><span>Connections generated from the existing wiki data.</span></div>
+  <div class="graph-stat-card"><span class="graph-stat-kicker">Node types</span><strong>5</strong><span>Distinct entity categories ready to explore.</span></div>
+  <div class="graph-stat-card"><span class="graph-stat-kicker">Edge types</span><strong>11</strong><span>Different relationship kinds available in the current build.</span></div>
+</div>
+
+## What You Can Explore
+
+- **Resources** connect source material to the topics and concepts they cover.
+- **Topics** act as stable learning buckets and collect related resources.
+- **Concepts** tie recurring ideas together across multiple resources and topics.
+- **Review pages** surface weak notes, missing citations, stale notes, and other quality signals.
+
+## How Entities Connect
+
+The graph is built from the same generated wiki data that powers the
+resource pages, concept pages, review pages, and learning chapters.
+That means every visible connection is backed by files already present
+in the wiki build rather than by a runtime inference layer.
 
 | File | Purpose |
 |---|---|
 | [/graph/nodes.json](/graph/nodes.json) | All graph nodes |
 | [/graph/edges.json](/graph/edges.json) | All graph edges |
 | [/graph/knowledge_graph.json](/graph/knowledge_graph.json) | Combined bundle with stats |
-| [Open the graph viewer](/graph/viewer) | Interactive neighborhood + filter explorer (Prompt 25) |
+| [Open the graph workspace](/graph/explore) | App-style graph workspace for exploration and demos |
+| [Open the compatibility viewer](/graph/viewer) | Technical/reference page with the same graph runtime |
+| [Open the relationship report](/graph/resource-relationships) | Deterministic resource-to-resource relationship summary |
 
 ## Stats
 
 - Schema version: `1.0.0`
-- Nodes: 33
-- Edges: 60
+- Nodes: 65
+- Edges: 1069
 
 ### Node types
 
 | Type | Count |
 |---|---:|
-| concept | 3 |
+| concept | 14 |
 | learn_chapter | 10 |
-| resource | 1 |
+| resource | 24 |
 | review_page | 7 |
-| tag | 2 |
 | topic | 10 |
 
 ### Edge types
 
 | Type | Count |
 |---|---:|
-| concept_in_topic | 3 |
-| learn_chapter_uses_resource | 2 |
-| resource_has_tag | 2 |
-| resource_has_topic | 1 |
-| resource_mentions_concept | 3 |
-| review_page_reviews_resource | 3 |
-| topic_has_resource | 1 |
+| concept_in_topic | 95 |
+| learn_chapter_uses_resource | 104 |
+| resource_has_topic | 43 |
+| resource_mentions_concept | 135 |
+| resource_same_source_type_as_resource | 123 |
+| resource_shares_concept_with_resource | 190 |
+| resource_shares_topic_with_resource | 60 |
+| resource_similar_to_resource | 191 |
+| review_page_reviews_resource | 40 |
+| topic_has_resource | 43 |
 | topic_related_to_topic | 45 |
 
 ## Provenance
 
-- Generated: 2026-06-08T15:31:27.993847+00:00
+- Generated: 2026-06-09T11:38:56.288122+00:00

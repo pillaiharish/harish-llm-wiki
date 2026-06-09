@@ -18,6 +18,8 @@ test('/graph page loads', async ({ page }) => {
   const status = response?.status() ?? 0
   expect(status, `/graph/ returned ${status}`).toBeLessThan(400)
   await expect(page.getByRole('heading', { name: 'Knowledge Graph', level: 1 })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Open Interactive Graph' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'View Resource Relationships' })).toBeVisible()
 })
 
 test('/graph/viewer page loads and contains the viewer title', async ({ page }) => {
@@ -28,6 +30,14 @@ test('/graph/viewer page loads and contains the viewer title', async ({ page }) 
   await expect(
     page.getByRole('heading', { name: 'Knowledge Graph Viewer', level: 1 })
   ).toBeVisible()
+})
+
+test('/graph/explore page loads and contains the workspace title', async ({ page }) => {
+  const response = await page.goto('/graph/explore', { waitUntil: 'domcontentloaded' })
+  expect(response, 'no response for /graph/explore').not.toBeNull()
+  const status = response?.status() ?? 0
+  expect(status, `/graph/explore returned ${status}`).toBeLessThan(400)
+  await expect(page.getByRole('heading', { name: 'Graph Workspace', level: 1 })).toBeVisible()
 })
 
 test('/graph/viewer loads graph data and shows live stats', async ({ page }) => {
@@ -52,6 +62,17 @@ test('/graph/viewer loads graph data and shows live stats', async ({ page }) => 
   expect(mainText).toMatch(/Edges:\s*\d+/)
 })
 
+test('/graph/resource-relationships page loads and contains the report title', async ({ page }) => {
+  const response = await page.goto('/graph/resource-relationships', { waitUntil: 'domcontentloaded' })
+  expect(response, 'no response for /graph/resource-relationships').not.toBeNull()
+  const status = response?.status() ?? 0
+  expect(status, `/graph/resource-relationships returned ${status}`).toBeLessThan(400)
+  await expect(
+    page.getByRole('heading', { name: 'Resource Relationships', level: 1 })
+  ).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Why This Page Matters', level: 2 })).toBeVisible()
+})
+
 test('/graph/knowledge_graph.json returns a healthy response', async () => {
   const ctx = await request.newContext({ baseURL: 'http://127.0.0.1:5173' })
   const response = await ctx.get('/graph/knowledge_graph.json')
@@ -69,10 +90,10 @@ test('/graph/knowledge_graph.json returns a healthy response', async () => {
  * Helper: navigate to the viewer and wait for the Cytoscape
  * instance to be exposed on window.__graphCy.
  */
-async function gotoViewerWithCy(page: Page) {
+async function gotoGraphPageWithCy(page: Page, route: string = '/graph/viewer') {
   const currentUrl = page.url()
-  if (!currentUrl.includes('/graph/viewer')) {
-    await page.goto('/graph/viewer', { waitUntil: 'domcontentloaded' })
+  if (!currentUrl.includes(route)) {
+    await page.goto(route, { waitUntil: 'domcontentloaded' })
   }
   await page.waitForFunction(
     () => {
@@ -89,6 +110,14 @@ async function gotoViewerWithCy(page: Page) {
   )
 }
 
+async function gotoViewerWithCy(page: Page) {
+  await gotoGraphPageWithCy(page, '/graph/viewer')
+}
+
+async function gotoExploreWithCy(page: Page) {
+  await gotoGraphPageWithCy(page, '/graph/explore')
+}
+
 test('graph canvas is visible with required height', async ({ page }) => {
   await gotoViewerWithCy(page)
   const canvas = page.locator('#graph-canvas')
@@ -97,6 +126,33 @@ test('graph canvas is visible with required height', async ({ page }) => {
   expect(box, 'graph canvas has no bounding box').not.toBeNull()
   expect(box!.width, 'graph canvas width is zero').toBeGreaterThan(0)
   expect(box!.height, `graph canvas height is ${box!.height}, expected >= 600`).toBeGreaterThanOrEqual(600)
+})
+
+test('/graph/explore shows the graph canvas above the fold on desktop', async ({ page }) => {
+  await gotoExploreWithCy(page)
+  const canvas = page.locator('#graph-canvas')
+  await expect(canvas).toBeVisible()
+  const box = await canvas.boundingBox()
+  expect(box, 'graph canvas has no bounding box').not.toBeNull()
+  const viewport = page.viewportSize()
+  expect(viewport).not.toBeNull()
+  expect(box!.y, `graph canvas starts too low at ${box!.y}px`).toBeLessThan((viewport?.height ?? 720) - 40)
+})
+
+test('/graph/explore shows the graph early on mobile and avoids horizontal overflow', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await gotoExploreWithCy(page)
+  const canvas = page.locator('#graph-canvas')
+  await expect(canvas).toBeVisible()
+  const box = await canvas.boundingBox()
+  expect(box, 'graph canvas has no bounding box').not.toBeNull()
+  expect(box!.y, `mobile graph canvas starts too low at ${box!.y}px`).toBeLessThan(900)
+  const overflow = await page.evaluate(() => {
+    const body = document.body
+    const doc = document.documentElement
+    return Math.max(body.scrollWidth, doc.scrollWidth) > window.innerWidth
+  })
+  expect(overflow, 'mobile explore page should not overflow horizontally').toBe(false)
 })
 
 test('cytoscape renders nodes and edges', async ({ page }) => {
@@ -1202,6 +1258,17 @@ async function gotoViewerWithExplorerState(page: Page) {
   )
 }
 
+async function waitForExplorerState(page: Page) {
+  await page.waitForFunction(
+    () => {
+      const s = (window as any).__graphExplorerState
+      return s && s.ready === true
+    },
+    null,
+    { timeout: 15_000 }
+  )
+}
+
 test('Prompt 38 dashboard: total node and edge counts match the JSON', async ({ page }) => {
   await gotoViewerWithExplorerState(page)
   const ctx = await request.newContext({ baseURL: 'http://127.0.0.1:5173' })
@@ -1477,6 +1544,17 @@ test('Prompt 38 explorer state: window.__graphExplorerState reports lens / layou
  */
 async function gotoViewerWithPathState(page: Page) {
   await gotoViewerWithExplorerState(page)
+  await page.waitForFunction(
+    () => {
+      const s = (window as any).__graphPathState
+      return s && s.ready === true
+    },
+    null,
+    { timeout: 15_000 }
+  )
+}
+
+async function waitForPathState(page: Page) {
   await page.waitForFunction(
     () => {
       const s = (window as any).__graphPathState
@@ -2016,6 +2094,17 @@ async function gotoViewerWithUrlState(page: Page) {
   )
 }
 
+async function waitForUrlState(page: Page) {
+  await page.waitForFunction(
+    () => {
+      const s = (window as any).__graphUrlState
+      return s && s.ready === true
+    },
+    null,
+    { timeout: 15_000 }
+  )
+}
+
 test('Prompt 40 URL: loading ?lens=resources applies the resources lens on first paint', async ({
   page,
 }) => {
@@ -2036,6 +2125,38 @@ test('Prompt 40 URL: loading ?layout=concentric applies the concentric layout on
   expect(state.layout, 'layout must be applied from URL on first paint').toBe('concentric')
   const layoutSelect = page.locator('#graph-layout')
   await expect(layoutSelect).toHaveValue('concentric')
+})
+
+test('Prompt 40.5 UX: /graph/viewer with query params shows a workspace handoff banner', async ({
+  page,
+}) => {
+  const query =
+    '?layout=grid&node=review_page%3Aweak&source=concept%3Achunking&target=concept%3Aattention&path=1'
+  await page.goto(`/graph/viewer${query}`, { waitUntil: 'domcontentloaded' })
+  await gotoViewerWithUrlState(page)
+  const banner = page.locator('#graph-workspace-handoff')
+  await expect(banner).toBeVisible()
+  const href = await page.locator('#graph-workspace-handoff-link').getAttribute('href')
+  expect(href).toBe(`/graph/explore${query}`)
+})
+
+test('Prompt 40.5 UX: /graph/explore restores the deep-link state and path result', async ({
+  page,
+}) => {
+  const url =
+    '/graph/explore?layout=grid&node=review_page%3Aweak&source=concept%3Achunking&target=concept%3Aattention&path=1'
+  await page.goto(url, { waitUntil: 'domcontentloaded' })
+  await gotoExploreWithCy(page)
+  await waitForExplorerState(page)
+  await waitForPathState(page)
+  const explorer = await page.evaluate(() => (window as any).__graphExplorerState)
+  const path = await page.evaluate(() => (window as any).__graphPathState)
+  expect(explorer.layout).toBe('grid')
+  expect(explorer.selectedNodeId).toBe('review_page:weak')
+  expect(path.status).toBe('found')
+  expect(path.sourceId).toBe('concept:chunking')
+  expect(path.targetId).toBe('concept:attention')
+  expect(path.pathNodeIds.length).toBeGreaterThanOrEqual(3)
 })
 
 test('Prompt 40 URL: loading ?node=<id>&neighborhood=1 selects a node and enables neighborhood mode', async ({
@@ -2121,11 +2242,12 @@ test('Prompt 40 URL: Copy view URL button exists and produces a deterministic UR
   )
   const url = await page.evaluate(() => (window as any).__graphUrlState.shareableUrl)
   expect(typeof url).toBe('string')
-  expect(url, 'shareableUrl must be a path under /graph/viewer').toContain('/graph/viewer')
+  expect(url, 'shareableUrl must be a path under /graph/explore').toContain('/graph/explore')
   expect(url, 'shareableUrl must include the lens=topics param').toContain('lens=topics')
   // Round-trip the URL by navigating to it.
   await page.goto(url, { waitUntil: 'domcontentloaded' })
-  await gotoViewerWithUrlState(page)
+  await gotoExploreWithCy(page)
+  await waitForUrlState(page)
   const state = await page.evaluate(() => (window as any).__graphExplorerState)
   expect(state.lens).toBe('topics')
 })
@@ -2215,7 +2337,7 @@ test('Prompt 40 URL: window.__graphUrlState has all required deterministic field
   expect(state.ready).toBe(true)
   expect(typeof state.query).toBe('string')
   expect(typeof state.shareableUrl).toBe('string')
-  expect(state.shareableUrl).toContain('/graph/viewer')
+  expect(state.shareableUrl).toContain('/graph/explore')
   expect(state.urlSynced).toBe(true)
   expect(typeof state.appliedParams).toBe('object')
   for (const k of [
@@ -2260,4 +2382,21 @@ test('Prompt 40 URL: no duplicate DOM ids after a URL-driven load and a zoom swe
       .map(([id, n]) => `${id}×${n}`)
   })
   expect(dupes, `found duplicate DOM ids: ${dupes.join(', ')}`).toEqual([])
+})
+
+test('Prompt 40.5 UX: deep-link routes do not overflow horizontally', async ({ page }) => {
+  const urls = [
+    '/graph/explore?layout=grid&node=review_page%3Aweak&source=concept%3Achunking&target=concept%3Aattention&path=1',
+    '/graph/viewer?layout=grid&node=review_page%3Aweak&source=concept%3Achunking&target=concept%3Aattention&path=1',
+  ]
+  for (const url of urls) {
+    await page.goto(url, { waitUntil: 'domcontentloaded' })
+    await waitForUrlState(page)
+    const overflow = await page.evaluate(() => {
+      const body = document.body
+      const doc = document.documentElement
+      return Math.max(body.scrollWidth, doc.scrollWidth) > window.innerWidth
+    })
+    expect(overflow, `${url} should not overflow horizontally`).toBe(false)
+  }
 })

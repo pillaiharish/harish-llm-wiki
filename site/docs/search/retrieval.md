@@ -47,14 +47,14 @@ The four sub-boosts are:
 
 ## Stats
 
-- BM25 index built: False
-- Vector index built: False
-- Chunk index built: False
-- BM25 chunks: 0
-- BM25 vocab size: 0
-- Vector chunks: 0
-- Vector dimension: 0
-- Chunk index chunks: 0
+- BM25 index built: True
+- Vector index built: True
+- Chunk index built: True
+- BM25 chunks: 147
+- BM25 vocab size: 4988
+- Vector chunks: 147
+- Vector dimension: 1024
+- Chunk index chunks: 147
 
 ## Example commands
 
@@ -91,17 +91,6 @@ chunk, and graph indexes. It does **not** add:
 - [BM25 report](/search/bm25) — the BM25 lexical backend.
 - [Vector report](/search/vector) — the deterministic local vector backend.
 - [Graph index](/graph/) — the on-disk knowledge graph.
-
-## Build the indexes
-
-The hybrid retrieval router reads the BM25, vector, and chunk
-indexes. If any of them is missing, the router still works
-for the modes that do not require it, but the candidate set
-may be smaller than expected. To rebuild all three:
-
-```
-.venv/bin/python -m wiki build-site --refresh
-```
 
 ## Provenance
 

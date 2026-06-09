@@ -1,6 +1,7 @@
 import DefaultTheme from 'vitepress/theme'
 import GraphExplorer from './components/GraphExplorer.vue'
 import SearchExplorer from './components/SearchExplorer.vue'
+import './style.css'
 
 export default {
   extends: DefaultTheme,
