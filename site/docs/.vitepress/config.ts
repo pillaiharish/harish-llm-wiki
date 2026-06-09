@@ -188,5 +188,28 @@ export default defineConfig({
     ['meta', { name: 'og:type', content: 'website' }],
     ['meta', { name: 'og:title', content: 'Harish LLM Wiki' }],
     ['meta', { name: 'og:description', content: 'Personal static learning wiki' }],
-  ]
+  ],
+
+  // Vite build configuration
+  // https://vitejs.dev/config/#build-options
+  //
+  // Prompt 37: chunk-size warning threshold.
+  //
+  // The default 500 kB threshold is exceeded by the VitePress
+  // local search index chunk (~559 kB after minification in the
+  // current build). That chunk is built by VitePress's
+  // search.provider = 'local' option and is loaded on demand
+  // when the user opens the search palette; it is NOT part of
+  // the initial page render. Cytoscape is already lazy-loaded
+  // in GraphExplorer.vue, so its ~433 kB dynamic chunk is well
+  // under the threshold.
+  //
+  // 600 kB gives ~7% headroom over the current 559 kB local
+  // search index while still surfacing any new chunk that
+  // crosses the threshold.
+  vite: {
+    build: {
+      chunkSizeWarningLimit: 600,
+    },
+  },
 })
