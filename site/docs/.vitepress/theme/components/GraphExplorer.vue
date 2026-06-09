@@ -899,6 +899,11 @@ async function loadGraph() {
   }
 }
 
+// Prompt 37: Cytoscape is loaded via dynamic import so the ~433 kB
+// vendor chunk only fetches on /graph/viewer, not on every page.
+// Do NOT convert this to a static import; doing so would push
+// cytoscape into the entry bundle and trigger the chunk-size
+// warning for every VitePress page.
 onMounted(async () => {
   if (typeof window === 'undefined') return
   if (import.meta.env.SSR) return
