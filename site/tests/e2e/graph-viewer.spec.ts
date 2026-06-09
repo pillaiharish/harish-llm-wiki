@@ -70,7 +70,10 @@ test('/graph/knowledge_graph.json returns a healthy response', async () => {
  * instance to be exposed on window.__graphCy.
  */
 async function gotoViewerWithCy(page: Page) {
-  await page.goto('/graph/viewer', { waitUntil: 'domcontentloaded' })
+  const currentUrl = page.url()
+  if (!currentUrl.includes('/graph/viewer')) {
+    await page.goto('/graph/viewer', { waitUntil: 'domcontentloaded' })
+  }
   await page.waitForFunction(
     () => {
       const cy = (window as any).__graphCy
@@ -1977,6 +1980,273 @@ test('Prompt 39 path finder: no duplicate DOM ids after running the finder and z
   await page.locator('#graph-path-target').selectOption(b)
   await page.locator('#graph-path-find').click()
   await page.waitForTimeout(300)
+  const dupes = await page.evaluate(() => {
+    const ids: Record<string, number> = {}
+    const all = document.querySelectorAll('#graph-explorer, #graph-explorer *')
+    all.forEach((el) => {
+      const id = el.getAttribute('id')
+      if (!id) return
+      ids[id] = (ids[id] || 0) + 1
+    })
+    return Object.entries(ids)
+      .filter(([, n]) => n > 1)
+      .map(([id, n]) => `${id}×${n}`)
+  })
+  expect(dupes, `found duplicate DOM ids: ${dupes.join(', ')}`).toEqual([])
+})
+
+// ---------------------------------------------------------------------------
+// Prompt 40 — Saved Graph Views + Shareable Graph Query URLs v1
+// ---------------------------------------------------------------------------
+
+/**
+ * Helper: wait for the Prompt 40 ``window.__graphUrlState``
+ * debug handle to be set so the URL state can be inspected
+ * from page.evaluate.
+ */
+async function gotoViewerWithUrlState(page: Page) {
+  await gotoViewerWithExplorerState(page)
+  await page.waitForFunction(
+    () => {
+      const s = (window as any).__graphUrlState
+      return s && s.ready === true
+    },
+    null,
+    { timeout: 15_000 }
+  )
+}
+
+test('Prompt 40 URL: loading ?lens=resources applies the resources lens on first paint', async ({
+  page,
+}) => {
+  await page.goto('/graph/viewer?lens=resources', { waitUntil: 'domcontentloaded' })
+  await gotoViewerWithUrlState(page)
+  const state = await page.evaluate(() => (window as any).__graphExplorerState)
+  expect(state.lens, 'lens must be applied from URL on first paint').toBe('resources')
+  const lensSelect = page.locator('#graph-lens')
+  await expect(lensSelect).toHaveValue('resources')
+})
+
+test('Prompt 40 URL: loading ?layout=concentric applies the concentric layout on first paint', async ({
+  page,
+}) => {
+  await page.goto('/graph/viewer?layout=concentric', { waitUntil: 'domcontentloaded' })
+  await gotoViewerWithUrlState(page)
+  const state = await page.evaluate(() => (window as any).__graphExplorerState)
+  expect(state.layout, 'layout must be applied from URL on first paint').toBe('concentric')
+  const layoutSelect = page.locator('#graph-layout')
+  await expect(layoutSelect).toHaveValue('concentric')
+})
+
+test('Prompt 40 URL: loading ?node=<id>&neighborhood=1 selects a node and enables neighborhood mode', async ({
+  page,
+}) => {
+  // First load a plain viewer to discover a valid node id.
+  await gotoViewerWithExplorerState(page)
+  const targetId = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    for (let i = 0; i < cy.nodes().length; i++) {
+      const n = cy.nodes()[i]
+      if (n.neighborhood().length > 0) return n.id() as string
+    }
+    return cy.nodes()[0].id() as string
+  })
+  expect(targetId).toBeTruthy()
+  // Now load with the URL params.
+  const url = `/graph/viewer?node=${encodeURIComponent(targetId)}&neighborhood=1`
+  await page.goto(url, { waitUntil: 'domcontentloaded' })
+  await gotoViewerWithUrlState(page)
+  const state = await page.evaluate(() => (window as any).__graphExplorerState)
+  expect(state.selectedNodeId, 'selectedNodeId must come from URL').toBe(targetId)
+  expect(state.neighborhoodMode, 'neighborhoodMode must be on from URL').toBe(true)
+  // The dashboard's data-selected-id reflects the URL.
+  const selectedAttr = await page.locator('#graph-stat-selected').getAttribute('data-selected-id')
+  expect(selectedAttr).toBe(targetId)
+})
+
+test('Prompt 40 URL: loading ?source=<a>&target=<b>&path=1 runs the path finder and highlights the path', async ({
+  page,
+}) => {
+  // Discover two connected nodes.
+  await gotoViewerWithPathState(page)
+  const [a, b] = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    const ids: string[] = []
+    cy.nodes().forEach((n: any) => {
+      if (ids.length < 2 && n.neighborhood().length > 0) {
+        ids.push(n.id() as string)
+      }
+    })
+    return ids
+  })
+  expect(a).toBeTruthy()
+  expect(b).toBeTruthy()
+  expect(a).not.toBe(b)
+  // Now load with the URL params. Use show-all so the full
+  // graph is on the canvas — that way the path nodes are
+  // visible and the highlight is observable.
+  const url =
+    `/graph/viewer?source=${encodeURIComponent(a)}` +
+    `&target=${encodeURIComponent(b)}` +
+    `&path=1`
+  await page.goto(url, { waitUntil: 'domcontentloaded' })
+  await gotoViewerWithPathState(page)
+  const state = await page.evaluate(() => (window as any).__graphPathState)
+  expect(state.sourceId, 'sourceId must come from URL').toBe(a)
+  expect(state.targetId, 'targetId must come from URL').toBe(b)
+  expect(state.status, 'path must be computed on first paint').toBe('found')
+  expect(state.pathNodeIds.length).toBeGreaterThanOrEqual(2)
+  // The path nodes must be highlighted on the canvas.
+  const pathNodeCount = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    return cy.nodes('.path-highlight').length
+  })
+  expect(pathNodeCount).toBe(state.pathNodeIds.length)
+})
+
+test('Prompt 40 URL: Copy view URL button exists and produces a deterministic URL on click', async ({
+  page,
+}) => {
+  await gotoViewerWithUrlState(page)
+  const btn = page.locator('#graph-copy-view-url')
+  await expect(btn).toBeVisible()
+  // Apply a non-default lens so the shareable URL is non-empty.
+  await page.locator('#graph-lens').selectOption('topics')
+  await page.waitForTimeout(300)
+  await btn.click()
+  await page.waitForFunction(
+    () => (window as any).__graphUrlState?.lastAction === 'copied',
+    null,
+    { timeout: 5_000 }
+  )
+  const url = await page.evaluate(() => (window as any).__graphUrlState.shareableUrl)
+  expect(typeof url).toBe('string')
+  expect(url, 'shareableUrl must be a path under /graph/viewer').toContain('/graph/viewer')
+  expect(url, 'shareableUrl must include the lens=topics param').toContain('lens=topics')
+  // Round-trip the URL by navigating to it.
+  await page.goto(url, { waitUntil: 'domcontentloaded' })
+  await gotoViewerWithUrlState(page)
+  const state = await page.evaluate(() => (window as any).__graphExplorerState)
+  expect(state.lens).toBe('topics')
+})
+
+test('Prompt 40 URL: Reset URL state clears the query params and resets all URL-driven refs', async ({
+  page,
+}) => {
+  // Start with a non-default state.
+  await page.goto('/graph/viewer?lens=resources&layout=concentric', {
+    waitUntil: 'domcontentloaded',
+  })
+  await gotoViewerWithUrlState(page)
+  // Apply neighborhood mode and a path.
+  const targetId = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    for (let i = 0; i < cy.nodes().length; i++) {
+      const n = cy.nodes()[i]
+      if (n.neighborhood().length > 0) return n.id() as string
+    }
+    return cy.nodes()[0].id() as string
+  })
+  await page.evaluate((id: string) => {
+    const cy = (window as any).__graphCy
+    cy.getElementById(id).emit('tap')
+  }, targetId)
+  await page.waitForTimeout(200)
+  await page.locator('#graph-neighborhood-mode').click()
+  await page.waitForTimeout(200)
+  // Now click the Reset URL state button.
+  const resetBtn = page.locator('#graph-reset-url-state')
+  await expect(resetBtn).toBeVisible()
+  await resetBtn.click()
+  await page.waitForFunction(
+    () => (window as any).__graphUrlState?.lastAction === 'reset',
+    null,
+    { timeout: 5_000 }
+  )
+  // window.location.search is now empty.
+  const search = await page.evaluate(() => window.location.search)
+  expect(['', '?'].includes(search), `search should be empty, got ${search!}`).toBe(true)
+  // All URL-driven refs are at their defaults.
+  const explorer = await page.evaluate(() => (window as any).__graphExplorerState)
+  expect(explorer.lens, 'lens must be reset to all').toBe('all')
+  expect(explorer.layout, 'layout must be reset to cose').toBe('cose')
+  expect(explorer.neighborhoodMode, 'neighborhoodMode must be off').toBe(false)
+  expect(explorer.selectedNodeId, 'selectedNodeId must be null').toBeNull()
+  // Path-finder state is back to idle.
+  const path = await page.evaluate(() => (window as any).__graphPathState)
+  expect(path.status, 'path status must be idle after reset').toBe('idle')
+  expect(path.sourceId, 'sourceId must be empty after reset').toBe('')
+  expect(path.targetId, 'targetId must be empty after reset').toBe('')
+})
+
+test('Prompt 40 URL: invalid lens/layout params are ignored safely on first paint', async ({
+  page,
+}) => {
+  await page.goto('/graph/viewer?lens=banana&layout=foo', { waitUntil: 'domcontentloaded' })
+  await gotoViewerWithUrlState(page)
+  const state = await page.evaluate(() => (window as any).__graphExplorerState)
+  expect(state.lens, 'invalid lens must fall back to default').toBe('all')
+  expect(state.layout, 'invalid layout must fall back to default').toBe('cose')
+  await expect(page.locator('#graph-lens')).toHaveValue('all')
+  await expect(page.locator('#graph-layout')).toHaveValue('cose')
+})
+
+test('Prompt 40 URL: changing the lens updates the URL via history.replaceState (no full reload)', async ({
+  page,
+}) => {
+  await gotoViewerWithUrlState(page)
+  await page.locator('#graph-lens').selectOption('resources')
+  await page.waitForTimeout(300)
+  // The same `window.__graphCy` instance should still be
+  // present (a full reload would have created a new component
+  // instance and a new cy).
+  const cyStillThere = await page.evaluate(() => !!(window as any).__graphCy)
+  expect(cyStillThere, 'cy instance must persist across URL update (no full reload)').toBe(true)
+  const search = await page.evaluate(() => window.location.search)
+  expect(search, 'URL must include lens=resources after a lens change').toContain('lens=resources')
+})
+
+test('Prompt 40 URL: window.__graphUrlState has all required deterministic fields', async ({
+  page,
+}) => {
+  await gotoViewerWithUrlState(page)
+  const state = await page.evaluate(() => (window as any).__graphUrlState)
+  expect(state).toBeTruthy()
+  expect(state.ready).toBe(true)
+  expect(typeof state.query).toBe('string')
+  expect(typeof state.shareableUrl).toBe('string')
+  expect(state.shareableUrl).toContain('/graph/viewer')
+  expect(state.urlSynced).toBe(true)
+  expect(typeof state.appliedParams).toBe('object')
+  for (const k of [
+    'lens',
+    'layout',
+    'node',
+    'neighborhood',
+    'source',
+    'target',
+    'path',
+  ]) {
+    expect(k in state.appliedParams, `appliedParams missing ${k}`).toBe(true)
+  }
+  expect(['string', 'object']).toContain(typeof state.lastAction)
+})
+
+test('Prompt 40 URL: no duplicate DOM ids after a URL-driven load and a zoom sweep', async ({
+  page,
+}) => {
+  await page.goto('/graph/viewer?lens=resources&layout=concentric', {
+    waitUntil: 'domcontentloaded',
+  })
+  await gotoViewerWithUrlState(page)
+  for (const z of [0.25, 0.7, 1.5, 3.0]) {
+    await page.evaluate((zoom: number) => {
+      const cy = (window as any).__graphCy
+      cy.zoom(zoom)
+      cy.emit('zoom')
+    }, z)
+    await page.waitForTimeout(150)
+  }
   const dupes = await page.evaluate(() => {
     const ids: Record<string, number> = {}
     const all = document.querySelectorAll('#graph-explorer, #graph-explorer *')

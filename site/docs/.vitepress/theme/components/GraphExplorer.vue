@@ -68,6 +68,27 @@ type PathResult = {
   steps: PathStep[]
 }
 
+type GraphQueryParams = {
+  lens: LensValue | null
+  layout: LayoutValue | null
+  node: string | null
+  neighborhood: boolean
+  source: string | null
+  target: string | null
+  path: boolean
+}
+
+const VALID_LENS_VALUES: LensValue[] = [
+  'all',
+  'resources',
+  'topics',
+  'concepts',
+  'learn_chapters',
+  'review_pages',
+]
+
+const VALID_LAYOUT_VALUES: LayoutValue[] = ['cose', 'grid', 'circle', 'concentric']
+
 const LENS_TO_TYPE: Record<LensValue, string | null> = {
   all: null,
   resources: 'resource',
@@ -892,6 +913,7 @@ function buildCy() {
     } else {
       updateExplorerStateDebug()
     }
+    updateGraphQueryParams()
   })
   cy.on('tap', 'edge', (evt: any) => {
     const e = evt.target
@@ -909,6 +931,7 @@ function buildCy() {
     } else {
       updateExplorerStateDebug()
     }
+    updateGraphQueryParams()
   })
   cy.on('tap', (evt: any) => {
     if (evt.target === cy) {
@@ -925,6 +948,7 @@ function buildCy() {
       } else {
         updateExplorerStateDebug()
       }
+      updateGraphQueryParams()
     }
   })
   cy.on('mouseover', 'node', (evt: any) => {
@@ -1115,18 +1139,21 @@ function pickNeighbor(id: string) {
   if (neighborhoodMode.value) {
     reRenderCy()
   }
+  updateGraphQueryParams()
 }
 
 function onPathSourceChange(ev: Event) {
   const t = ev.target as HTMLSelectElement
   pathSourceId.value = t.value
   updatePathStateDebug()
+  updateGraphQueryParams()
 }
 
 function onPathTargetChange(ev: Event) {
   const t = ev.target as HTMLSelectElement
   pathTargetId.value = t.value
   updatePathStateDebug()
+  updateGraphQueryParams()
 }
 
 function runPathFinder() {
@@ -1137,6 +1164,7 @@ function runPathFinder() {
   pathSteps.value = result.steps
   applyPathHighlight()
   updatePathStateDebug()
+  updateGraphQueryParams()
 }
 
 function clearPathFinder() {
@@ -1148,6 +1176,7 @@ function clearPathFinder() {
   pathSteps.value = []
   applyPathHighlight()
   updatePathStateDebug()
+  updateGraphQueryParams()
 }
 
 function applyPathHighlight() {
@@ -1186,10 +1215,216 @@ function updatePathStateDebug() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Prompt 40: Saved Graph Views + Shareable Graph Query URLs v1
+// ---------------------------------------------------------------------------
+
+function readGraphQueryParams(): GraphQueryParams {
+  const empty: GraphQueryParams = {
+    lens: null,
+    layout: null,
+    node: null,
+    neighborhood: false,
+    source: null,
+    target: null,
+    path: false,
+  }
+  if (typeof window === 'undefined' || !window.location) return empty
+  let search = window.location.search || ''
+  if (!search) return empty
+  if (search.charAt(0) === '?') search = search.slice(1)
+  let usp: URLSearchParams
+  try {
+    usp = new URLSearchParams(search)
+  } catch {
+    return empty
+  }
+  const lensRaw = usp.get('lens')
+  if (lensRaw && VALID_LENS_VALUES.indexOf(lensRaw as LensValue) >= 0) {
+    empty.lens = lensRaw as LensValue
+  }
+  const layoutRaw = usp.get('layout')
+  if (layoutRaw && VALID_LAYOUT_VALUES.indexOf(layoutRaw as LayoutValue) >= 0) {
+    empty.layout = layoutRaw as LayoutValue
+  }
+  const nodeRaw = usp.get('node')
+  if (nodeRaw && nodeRaw.length > 0) empty.node = nodeRaw
+  const nbhRaw = usp.get('neighborhood')
+  if (nbhRaw === '1') empty.neighborhood = true
+  const sourceRaw = usp.get('source')
+  if (sourceRaw && sourceRaw.length > 0) empty.source = sourceRaw
+  const targetRaw = usp.get('target')
+  if (targetRaw && targetRaw.length > 0) empty.target = targetRaw
+  const pathRaw = usp.get('path')
+  if (pathRaw === '1') empty.path = true
+  return empty
+}
+
+function applyGraphQueryParams(params: GraphQueryParams) {
+  if (!graph.value) return
+  if (params.lens) lens.value = params.lens
+  if (params.layout) layoutName.value = params.layout
+  if (params.node && nodeById(params.node)) {
+    selectedNodeId.value = params.node
+    selectedEdgeId.value = null
+  }
+  if (params.neighborhood && selectedNodeId.value) {
+    neighborhoodMode.value = true
+  } else if (!params.neighborhood) {
+    neighborhoodMode.value = false
+  }
+  if (params.source && nodeById(params.source)) {
+    pathSourceId.value = params.source
+  }
+  if (params.target && nodeById(params.target)) {
+    pathTargetId.value = params.target
+  }
+  if (
+    params.path &&
+    pathSourceId.value &&
+    pathTargetId.value &&
+    nodeById(pathSourceId.value) &&
+    nodeById(pathTargetId.value)
+  ) {
+    const r = findShortestPath(pathSourceId.value, pathTargetId.value)
+    pathStatus.value = r.status
+    pathNodeIds.value = r.pathNodeIds
+    pathEdgeIds.value = r.pathEdgeIds
+    pathSteps.value = r.steps
+  }
+  reRenderCy()
+  applyPathHighlight()
+  updateExplorerStateDebug()
+  updatePathStateDebug()
+  updateGraphUrlStateDebug()
+}
+
+function buildGraphQueryString(): string {
+  const usp = new URLSearchParams()
+  if (lens.value !== 'all') usp.set('lens', lens.value)
+  if (layoutName.value !== 'cose') usp.set('layout', layoutName.value)
+  if (selectedNodeId.value) usp.set('node', selectedNodeId.value)
+  if (neighborhoodMode.value) usp.set('neighborhood', '1')
+  if (pathSourceId.value) usp.set('source', pathSourceId.value)
+  if (pathTargetId.value) usp.set('target', pathTargetId.value)
+  if (
+    pathStatus.value === 'found' ||
+    pathStatus.value === 'same_node' ||
+    pathStatus.value === 'not_found'
+  ) {
+    usp.set('path', '1')
+  }
+  const s = usp.toString()
+  return s
+}
+
+function buildShareableGraphUrl(): string {
+  const qs = buildGraphQueryString()
+  const origin =
+    typeof window !== 'undefined' && window.location
+      ? window.location.origin || ''
+      : ''
+  const path =
+    typeof window !== 'undefined' && window.location
+      ? window.location.pathname || '/graph/viewer'
+      : '/graph/viewer'
+  if (!qs) return origin + path
+  return origin + path + '?' + qs
+}
+
+function updateGraphQueryParams() {
+  if (typeof window === 'undefined' || !window.history) return
+  if (typeof window.location === 'undefined') return
+  const qs = buildGraphQueryString()
+  const path = window.location.pathname || '/graph/viewer'
+  const url = path + (qs ? '?' + qs : '')
+  try {
+    window.history.replaceState(null, '', url)
+  } catch {
+    // ignore — replaceState can throw in sandboxed contexts
+  }
+  updateGraphUrlStateDebug()
+}
+
+async function copyViewUrl() {
+  const url = buildShareableGraphUrl()
+  if (typeof navigator !== 'undefined' && navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(url)
+      updateGraphUrlStateDebug({ lastAction: 'copied' })
+      return
+    } catch {
+      // fall through
+    }
+  }
+  if (typeof document === 'undefined') {
+    updateGraphUrlStateDebug({ lastAction: 'copy_failed' })
+    return
+  }
+  try {
+    const ta = document.createElement('textarea')
+    ta.value = url
+    ta.setAttribute('readonly', '')
+    ta.style.position = 'absolute'
+    ta.style.left = '-9999px'
+    document.body.appendChild(ta)
+    ta.select()
+    try {
+      document.execCommand('copy')
+      updateGraphUrlStateDebug({ lastAction: 'copied' })
+    } catch {
+      updateGraphUrlStateDebug({ lastAction: 'copy_failed' })
+    }
+    document.body.removeChild(ta)
+  } catch {
+    updateGraphUrlStateDebug({ lastAction: 'copy_failed' })
+  }
+}
+
+function resetUrlState() {
+  lens.value = 'all'
+  layoutName.value = 'cose'
+  selectedNodeId.value = null
+  selectedEdgeId.value = null
+  neighborhoodMode.value = false
+  pathSourceId.value = ''
+  pathTargetId.value = ''
+  pathStatus.value = 'idle'
+  pathNodeIds.value = []
+  pathEdgeIds.value = []
+  pathSteps.value = []
+  reRenderCy()
+  applyPathHighlight()
+  updateExplorerStateDebug()
+  updatePathStateDebug()
+  updateGraphQueryParams()
+  updateGraphUrlStateDebug({ lastAction: 'reset' })
+}
+
+function updateGraphUrlStateDebug(
+  extra: { lastAction?: 'copied' | 'copy_failed' | 'reset' | null } = {}
+) {
+  if (typeof window === 'undefined') return
+  const url = buildShareableGraphUrl()
+  const query =
+    typeof window !== 'undefined' && window.location && window.location.search
+      ? window.location.search.replace(/^\?/, '')
+      : ''
+  ;(window as any).__graphUrlState = {
+    ready: !!graph.value,
+    query,
+    shareableUrl: url,
+    urlSynced: true,
+    appliedParams: readGraphQueryParams(),
+    lastAction: extra.lastAction || null,
+  }
+}
+
 function onLensChange(ev: Event) {
   const target = ev.target as HTMLSelectElement
   lens.value = (target.value as LensValue) || 'all'
   reRenderCy()
+  updateGraphQueryParams()
 }
 
 function onLayoutChange(ev: Event) {
@@ -1203,6 +1438,7 @@ function onLayoutChange(ev: Event) {
   currentZoom.value = cy.zoom()
   applySemanticZoom()
   updateExplorerStateDebug()
+  updateGraphQueryParams()
 }
 
 function toggleNeighborhoodMode() {
@@ -1211,16 +1447,19 @@ function toggleNeighborhoodMode() {
     // no-op keeps the button safe to click via tests.
     neighborhoodMode.value = false
     updateExplorerStateDebug()
+    updateGraphQueryParams()
     return
   }
   neighborhoodMode.value = !neighborhoodMode.value
   reRenderCy()
+  updateGraphQueryParams()
 }
 
 function exitNeighborhoodMode() {
   if (!neighborhoodMode.value) return
   neighborhoodMode.value = false
   reRenderCy()
+  updateGraphQueryParams()
 }
 
 function incomingCountFor(id: string | null): number {
@@ -1297,6 +1536,9 @@ function updateExplorerStateDebug() {
       targetId: pathTargetId.value,
     },
   }
+  // Keep the URL debug handle in sync whenever the explorer
+  // state changes.
+  updateGraphUrlStateDebug()
 }
 
 function setupResizeObserver() {
@@ -1371,8 +1613,20 @@ async function loadGraph() {
     dataState.value = 'ready'
     errorMessage.value = null
     updateLiveStatsLine()
+    // Prompt 40: apply URL params to the component state BEFORE
+    // buildCy() so cytoscape is initialised with the URL-driven
+    // lens / layout / selection. applyGraphQueryParams() ends
+    // with reRenderCy(), which is a no-op while cy is null — so
+    // the second call after buildCy() below is what does the
+    // actual render and is what the e2e helper waits for.
+    applyGraphQueryParams(readGraphQueryParams())
     await nextTick()
     buildCy()
+    // Re-apply to make sure the post-build debug handles
+    // (__graphExplorerState, __graphUrlState) reflect the
+    // URL-driven state on the first paint.
+    applyGraphQueryParams(readGraphQueryParams())
+    updateGraphUrlStateDebug()
   } catch (e: any) {
     dataState.value = 'error'
     errorMessage.value = (e && e.message) || String(e)
@@ -1405,6 +1659,7 @@ onBeforeUnmount(() => {
     delete (window as any).__graphLabelDebug
     delete (window as any).__graphExplorerState
     delete (window as any).__graphPathState
+    delete (window as any).__graphUrlState
   }
 })
 
@@ -1572,6 +1827,18 @@ const selectedDisplay = computed<string>(() => {
           @click="clearPathFinder"
         >Clear</button>
       </fieldset>
+      <button
+        id="graph-copy-view-url"
+        type="button"
+        title="Copy a shareable URL with the current graph state"
+        @click="copyViewUrl"
+      >Copy view URL</button>
+      <button
+        id="graph-reset-url-state"
+        type="button"
+        title="Reset the graph URL state and clear URL query params"
+        @click="resetUrlState"
+      >Reset URL state</button>
       <button
         id="graph-neighborhood-mode"
         type="button"
