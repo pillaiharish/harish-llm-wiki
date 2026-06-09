@@ -19,25 +19,38 @@ belong to later prompts.
 ## Stats
 
 - Schema version: `vector_index_v1`
-- Chunks indexed: 0
-- Resources: 0
-- Dimension: 0
-- Vocab size: 0
-- Total NNZ: 0
+- Chunks indexed: 147
+- Resources: 23
+- Dimension: 1024
+- Vocab size: 4988
+- Total NNZ: 16272
 
-## Build the vector index
+### By source type
 
-The vector index has not been built yet. Run:
+| Source type | Chunk count |
+|---|---:|
+| local_transcript | 1 |
+| local_video | 1 |
+| medium_markdown | 3 |
+| pdf | 13 |
+| webpage | 60 |
+| youtube | 69 |
+
+## Example queries
+
+These are the canonical example queries from `prompt29.md`. Each
+can be reproduced with the CLI:
 
 ```
-.venv/bin/python -m wiki build-vector-index
+.venv/bin/python -m wiki search-vector "attention transformer"
+.venv/bin/python -m wiki search-vector "scaled dot-product attention"
+.venv/bin/python -m wiki search-vector "embeddings retrieval"
+.venv/bin/python -m wiki search-vector "vllm paged attention"
+.venv/bin/python -m wiki search-vector "rag evaluation"
 ```
 
-Or rebuild the derived views:
-
-```
-.venv/bin/python -m wiki build-site --refresh
-```
+Pass `--json` to emit a JSON array on stdout, suitable for piping
+into a downstream retrieval pipeline.
 
 ## Provenance
 

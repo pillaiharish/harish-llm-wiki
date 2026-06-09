@@ -1,44 +1,55 @@
+---
+pageClass: graph-viewer-page
+---
+
 # Knowledge Graph Viewer
 
-This page is a read-only, fully static visualization of the wiki's
-knowledge graph. It loads the JSON bundle at
-`graph/knowledge_graph.json` via `fetch` and never makes
-external network calls. The view is bounded: by default it shows
-the top 50 nodes by edge degree plus the immediate neighbors of
-the selected node.
+This page keeps the original graph viewer route available as a
+technical/reference surface. It loads the static graph bundle from
+`/graph/knowledge_graph.json`, preserves old share URLs, and exposes
+the same runtime used by the new graph workspace.
 
-The interactive UI is rendered by a Vue component
-(`<GraphExplorer />`) registered globally by the VitePress
-theme at `site/docs/.vitepress/theme/components/GraphExplorer.vue`.
-The component mounts Cytoscape.js and provides pan, zoom, drag,
-click-to-select, search, type filters, and a fit/reset/show-all
-control bar.
+<div id="graph-workspace-handoff" class="graph-workspace-handoff" hidden>
+  <div>
+    <strong>Open this state in the graph workspace</strong>
+    <span>The workspace route uses the same URL state, but presents the graph in a wider app-style layout.</span>
+  </div>
+  <a id="graph-workspace-handoff-link" class="graph-workspace-handoff-link" href="/graph/explore">Open workspace</a>
+</div>
+
+## What This Page Is For
+
+- **Compatibility:** old `/graph/viewer?...` links continue to restore their state here.
+- **Provenance:** the page keeps the generated stats, JSON links, and runtime notes close to the graph.
+- **Reference:** use this page when you want the original docs-oriented graph presentation.
+
+## Quick Links
+
+| Link | Purpose |
+|---|---|
+| [Open the graph workspace](/graph/explore) | Primary app-style graph route for demos and exploration |
+| [Open the graph landing page](/graph/) | Summary page for graph stats, data files, and navigation |
+| [Resource relationships report](/graph/resource-relationships) | Deterministic resource-to-resource relationship summary |
 
 ## JSON files
 
 | File | Purpose |
-| |---|
+|---|---|
 | [/graph/nodes.json](/graph/nodes.json) | All graph nodes |
 | [/graph/edges.json](/graph/edges.json) | All graph edges |
 | [/graph/knowledge_graph.json](/graph/knowledge_graph.json) | Combined bundle with stats |
-
-## Resource relationships
-
-See the [Resource Relationships report](/graph/resource-relationships)
-for a Markdown table of the resource-to-resource edges added in
-Prompt 24 (similarity, shared topics, shared concepts, etc.).
 
 ## Stats
 
 - Schema version: `1.0.0`
 - Nodes: 65
 - Edges: 1069
-- Generated: 2026-06-07T19:18:31.721194+00:00
+- Generated: 2026-06-09T11:14:32.892319+00:00
 
 ### Node type counts
 
 | Type | Count |
-| |---:|
+|---|---:|
 | concept | 14 |
 | learn_chapter | 10 |
 | resource | 24 |
@@ -48,7 +59,7 @@ Prompt 24 (similarity, shared topics, shared concepts, etc.).
 ### Edge type counts
 
 | Type | Count |
-| |---:|
+|---|---:|
 | concept_in_topic | 95 |
 | learn_chapter_uses_resource | 104 |
 | resource_has_topic | 43 |
@@ -67,14 +78,14 @@ below requires JavaScript. The Markdown tables above and the JSON
 links above can still be used to browse the graph data.</p>
 </noscript>
 
-## Interactive viewer
+## Interactive Viewer
 
 <div id="graph-live-stats" data-state="loading" aria-live="polite">
 <p id="graph-live-stats-line">Loading graph data…</p>
 </div>
 
 <div id="graph-viewer">
-<GraphExplorer />
+<GraphExplorer mode="reference" share-base-path="/graph/explore" />
 
 <svg id="graph-svg" width="0" height="0" style="display:none" aria-hidden="true" data-legacy-mini-graph="true"></svg>
 
@@ -98,17 +109,19 @@ links above can still be used to browse the graph data.</p>
     }
     var base = (import.meta.env.BASE_URL || "/");
     var url = base.replace(/\/$/, "/") + "graph/knowledge_graph.json";
-    // The companion <script> only sets up the live-stats state
-    // defaults. The Vue component
-    // (<GraphExplorer />) takes over and writes the final
-    // "Loaded graph: X nodes, Y edges" text once Cytoscape.js
-    // has fetched the JSON. We do NOT touch the line text here
-    // so the Vue component's update is not overwritten.
     var liveStats = document.getElementById("graph-live-stats");
     if (liveStats && !liveStats.getAttribute("data-state")) {
       liveStats.setAttribute("data-state", "loading");
     }
     window.__graphViewerUrl = url;
+
+    var handoff = document.getElementById("graph-workspace-handoff");
+    var link = document.getElementById("graph-workspace-handoff-link");
+    var search = (typeof window !== "undefined" && window.location) ? (window.location.search || "") : "";
+    if (handoff && link && search) {
+      link.setAttribute("href", "/graph/explore" + search);
+      handoff.removeAttribute("hidden");
+    }
   }
   if (typeof document === "undefined") return;
   if (document.readyState === "loading") {
@@ -119,44 +132,37 @@ links above can still be used to browse the graph data.</p>
 })();
 </script>
 
-## How to use
+## Working With URL State
 
-1. Use the **search** box to filter nodes by label, slug, or id.
-2. Use the **node type** and **edge type** checkboxes to filter by category.
-3. Use the **Lens** dropdown to focus on one node category (Resources,
-   Topics, Concepts, Learn chapters, or Review pages); choose **All**
-   to remove the lens.
-4. Use the **Layout** dropdown to switch the canvas layout between
-   `cose` (default, deterministic), `grid`, `circle`, and `concentric`.
-5. Select a node and toggle **Neighborhood mode** to restrict the
-   canvas to the selected node and its directly connected neighbours;
-   click **Exit neighborhood** or tap the background to return to the
-   normal view.
-6. The **Insight dashboard** above the canvas surfaces total /
-   visible node and edge counts, the currently selected node, and the
-   top ten most-connected nodes (click any row to focus that node).
-7. Click **Fit graph** to center the view; click **Reset zoom** to
-   zoom to 1×.
-8. Click **Show all** to render the full graph (otherwise the
-   explorer shows the top 50 nodes by degree).
-9. Click a node in the canvas, the list, or the neighbor list to
-   see its details, neighbors, and incoming/outgoing edges. The
-   details panel also shows the incoming / outgoing / total degree
-   counts and a **Copy node id** button.
-10. Click an edge in the canvas to see its source, target, type, and
-    metadata.
-11. Drag nodes to rearrange them, use the mouse wheel to zoom, and
-    click-drag the empty canvas to pan.
-  12. Use the **Path finder** above the canvas to ask "How is node A
-    connected to node B?" — pick a source and a target from the
-    dropdowns, click **Find path**, and the result panel shows the
-    shortest hop chain, the hop / node / edge counts, and highlights
-    the path on the canvas. Click **Clear** to reset.
-  13. Click **Copy view URL** to copy a shareable link that captures
-    the current lens, layout, selected node, neighborhood mode, and
-    path-finder state — paste it into a new tab to restore the same
-    view. Click **Reset URL state** to clear all graph query params
-    from the address bar and return the view to its defaults.
+This route accepts and restores the same graph query params used by
+the main workspace:
+
+- `layout`
+- `node`
+- `source`
+- `target`
+- `path`
+- `lens`
+- `neighborhood`
+
+If the page was opened with a query string, the compatibility banner
+above preserves the full query string when handing off to
+`/graph/explore`.
+
+## How to Use
+
+1. Use **Lens** to focus the graph on resources, topics, concepts,
+   learn chapters, or review pages.
+2. Use **Layout** to switch between `cose`, `grid`, `circle`, and
+   `concentric`.
+3. Select a node, then use **Neighborhood mode** to isolate its
+   closed neighborhood.
+4. Use the **Insight dashboard** to track visible counts and jump to
+   highly connected nodes.
+5. Use the **Path finder** controls and click **Find path** to trace
+   how two nodes connect, then **Clear** to reset the active path.
+6. Use **Copy view URL** to create a shareable state and **Reset URL state**
+   to clear the active graph query params.
 
 ## Provenance
 
@@ -169,6 +175,6 @@ links above can still be used to browse the graph data.</p>
   which is registered globally by
   `site/docs/.vitepress/theme/index.ts`.
 - The graph data itself is generated by
-  `wiki.graph.builder.GraphBuilder` (Prompt 23) and exported by
-  `wiki.graph.export.export_graph` (Prompt 23/24). The viewer
-  reads those files at runtime; it does not modify them.
+  `wiki.graph.builder.GraphBuilder` and exported by
+  `wiki.graph.export.export_graph`. The viewer reads those files at
+  runtime; it does not modify them.

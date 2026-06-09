@@ -1276,6 +1276,7 @@ class TestStaticRoutes:
         (tmp_path / "public" / "chunks").mkdir(parents=True, exist_ok=True)
         (tmp_path / "public" / "search").mkdir(parents=True, exist_ok=True)
         (tmp_path / "graph").joinpath("index.md").write_text("# Graph\n", encoding="utf-8")
+        (tmp_path / "graph").joinpath("explore.md").write_text("# Explore\n", encoding="utf-8")
         (tmp_path / "graph").joinpath("viewer.md").write_text("# Viewer\n", encoding="utf-8")
         (tmp_path / "graph").joinpath("resource-relationships.md").write_text(
             "# RR\n", encoding="utf-8"

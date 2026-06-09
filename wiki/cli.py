@@ -2701,6 +2701,7 @@ def smoke_site():
         ("Timeline page", site_dir / "timeline.md"),
         ("Gaps page", site_dir / "gaps.md"),
         ("Home page", site_dir / "index.md"),
+        ("Graph workspace", site_dir / "graph" / "explore.md"),
         ("Graph viewer", site_dir / "graph" / "viewer.md"),
     ]
 
@@ -2884,8 +2885,7 @@ def smoke_site():
             required_viewer_strings = (
                 "graph/knowledge_graph.json",
                 '<div id="graph-viewer">',
-                'id="graph-search"',
-                'id="graph-node-list"',
+                "<GraphExplorer ",
             )
             for needle in required_viewer_strings:
                 if needle not in viewer_content:
@@ -3006,6 +3006,7 @@ def validate(
         ("Tags page", site_builder.repo_site_dir / "tags" / "index.md"),
         ("Timeline page", site_builder.repo_site_dir / "timeline.md"),
         ("Gaps page", site_builder.repo_site_dir / "gaps.md"),
+        ("graph workspace", site_builder.repo_site_dir / "graph" / "explore.md"),
         ("graph viewer", site_builder.repo_site_dir / "graph" / "viewer.md"),
         ("chunks index page", site_builder.repo_site_dir / "chunks" / "index.md"),
         ("chunks public chunks.json", site_builder.repo_site_dir / "public" / "chunks" / "chunks.json"),

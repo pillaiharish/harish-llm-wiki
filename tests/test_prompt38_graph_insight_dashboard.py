@@ -350,7 +350,7 @@ class TestExistingContractsIntact:
 
     def test_viewer_md_keeps_existing_contracts(self):
         text = _viewer()
-        assert "<GraphExplorer />" in text
+        assert "<GraphExplorer " in text
         assert '<svg id="graph-svg"' in text
         assert "<noscript>" in text
         assert "</noscript>" in text

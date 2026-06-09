@@ -105,6 +105,7 @@ export default defineConfig({
           text: 'Graph',
           items: [
             { text: 'Index', link: '/graph/' },
+            { text: 'Explore', link: '/graph/explore' },
             { text: 'Viewer', link: '/graph/viewer' },
             { text: 'Resource relationships', link: '/graph/resource-relationships' },
           ]

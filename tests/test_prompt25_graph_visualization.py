@@ -638,7 +638,7 @@ class TestGraphExplorerComponent:
 
     def test_template_mounts_graph_explorer(self):
         text = self._viewer_template()
-        assert "<GraphExplorer />" in text
+        assert "<GraphExplorer " in text
 
     def test_template_keeps_legacy_svg_mini_graph(self):
         text = self._viewer_template()
@@ -1227,8 +1227,7 @@ class TestSmokeAndValidate:
         # The four required UI strings are checked
         assert "graph/knowledge_graph.json" in source
         assert '<div id="graph-viewer">' in source
-        assert 'id="graph-search"' in source
-        assert 'id="graph-node-list"' in source
+        assert "<GraphExplorer " in source
         # And they appear in the smoke_site body specifically (not
         # in viewer_markdown).
         # We confirm the smoke_site function is the one referencing

@@ -379,6 +379,7 @@ Do not publish publicly unless content is appropriate for public sharing.
             self._build_graph_index_page(graph)
             # Prompt 25: also write the static graph viewer page.
             self._build_graph_viewer_page(graph)
+            self._build_graph_explore_page(graph)
 
     def _build_graph_index_page(self, graph: dict) -> None:
         """Build a small Markdown landing page for the graph files.
@@ -389,24 +390,76 @@ Do not publish publicly unless content is appropriate for public sharing.
         stats = graph.get("stats", {})
         node_type_counts = stats.get("node_type_counts", {}) or {}
         edge_type_counts = stats.get("edge_type_counts", {}) or {}
+        node_count = stats.get("node_count", 0)
+        edge_count = stats.get("edge_count", 0)
         lines = [
+            "---",
+            "pageClass: graph-landing-page",
+            "---",
+            "",
             "# Knowledge Graph",
             "",
-            "The wiki exposes a deterministic knowledge graph as JSON for future",
-            "RAG, search, and visualization features.",
+            "The graph turns the wiki into a connected map of **resources**,",
+            "**topics**, **concepts**, and **review pages**. It is deterministic,",
+            "fully static, and designed to make relationships inspectable without",
+            "a backend service.",
+            "",
+            '<div class="graph-cta-grid">',
+            '  <a class="graph-cta-card graph-cta-card-primary" href="/graph/explore">',
+            '    <strong>Open Interactive Graph</strong>',
+            "    <span>Launch the full graph workspace with filters, path-finding, and node inspection.</span>",
+            "  </a>",
+            '  <a class="graph-cta-card" href="/graph/viewer">',
+            '    <strong>View Technical Reference</strong>',
+            "    <span>Open the compatibility viewer with provenance notes, JSON links, and runtime details.</span>",
+            "  </a>",
+            '  <a class="graph-cta-card" href="/graph/resource-relationships">',
+            '    <strong>View Resource Relationships</strong>',
+            "    <span>Review deterministic resource-to-resource relationships and jump into the graph workspace.</span>",
+            "  </a>",
+            '  <a class="graph-cta-card" href="/graph/knowledge_graph.json">',
+            '    <strong>View Graph JSON/Data</strong>',
+            "    <span>Browse the generated graph bundle and supporting node/edge exports.</span>",
+            "  </a>",
+            "</div>",
+            "",
+            "## At a Glance",
+            "",
+            '<div class="graph-stat-grid">',
+            f'  <div class="graph-stat-card"><span class="graph-stat-kicker">Nodes</span><strong>{node_count}</strong><span>Entities currently in the graph.</span></div>',
+            f'  <div class="graph-stat-card"><span class="graph-stat-kicker">Edges</span><strong>{edge_count}</strong><span>Connections generated from the existing wiki data.</span></div>',
+            f'  <div class="graph-stat-card"><span class="graph-stat-kicker">Node types</span><strong>{len(node_type_counts)}</strong><span>Distinct entity categories ready to explore.</span></div>',
+            f'  <div class="graph-stat-card"><span class="graph-stat-kicker">Edge types</span><strong>{len(edge_type_counts)}</strong><span>Different relationship kinds available in the current build.</span></div>',
+            "</div>",
+            "",
+            "## What You Can Explore",
+            "",
+            "- **Resources** connect source material to the topics and concepts they cover.",
+            "- **Topics** act as stable learning buckets and collect related resources.",
+            "- **Concepts** tie recurring ideas together across multiple resources and topics.",
+            "- **Review pages** surface weak notes, missing citations, stale notes, and other quality signals.",
+            "",
+            "## How Entities Connect",
+            "",
+            "The graph is built from the same generated wiki data that powers the",
+            "resource pages, concept pages, review pages, and learning chapters.",
+            "That means every visible connection is backed by files already present",
+            "in the wiki build rather than by a runtime inference layer.",
             "",
             "| File | Purpose |",
             "|---|---|",
             "| [/graph/nodes.json](/graph/nodes.json) | All graph nodes |",
             "| [/graph/edges.json](/graph/edges.json) | All graph edges |",
             "| [/graph/knowledge_graph.json](/graph/knowledge_graph.json) | Combined bundle with stats |",
-            "| [Open the graph viewer](/graph/viewer) | Interactive neighborhood + filter explorer (Prompt 25) |",
+            "| [Open the graph workspace](/graph/explore) | App-style graph workspace for exploration and demos |",
+            "| [Open the compatibility viewer](/graph/viewer) | Technical/reference page with the same graph runtime |",
+            "| [Open the relationship report](/graph/resource-relationships) | Deterministic resource-to-resource relationship summary |",
             "",
             "## Stats",
             "",
             f"- Schema version: `{graph.get('schema_version', 'unknown')}`",
-            f"- Nodes: {stats.get('node_count', 0)}",
-            f"- Edges: {stats.get('edge_count', 0)}",
+            f"- Nodes: {node_count}",
+            f"- Edges: {edge_count}",
             "",
             "### Node types",
             "",
@@ -469,18 +522,66 @@ Do not publish publicly unless content is appropriate for public sharing.
             if n.get("id")
         }
 
+        top_relationship_links = sorted(
+            edges,
+            key=lambda e: (
+                -float((e.get("metadata") or {}).get("score", 0.0)),
+                e.get("type", ""),
+                e.get("id", ""),
+            ),
+        )[:3]
+
         lines: list[str] = [
+            "---",
+            "pageClass: graph-relationships-page",
+            "---",
+            "",
             "# Resource Relationships",
             "",
             "Deterministic resource-to-resource relationships detected at graph build",
             "time (Prompt 24). Each row corresponds to a single edge in the",
             "knowledge graph. Scores and reason lists come from the edge metadata.",
             "",
+            "## Why This Page Matters",
+            "",
+            "These edges show which resources reinforce each other, overlap on",
+            "concepts, or appear to cover adjacent ground. Use this page as a",
+            "summary layer before jumping into the interactive graph workspace.",
+            "",
+            '<div class="graph-stat-grid">',
+        ]
+        for edge_type, count in rel_counts.items():
+            lines.append(
+                '  <div class="graph-stat-card">'
+                f'<span class="graph-stat-kicker">{edge_type}</span>'
+                f"<strong>{count}</strong>"
+                "<span>Relationship edges currently generated for this type.</span>"
+                "</div>"
+            )
+        lines.extend([
+            "</div>",
+            "",
+            "## Open In Graph Workspace",
+            "",
+            "- [Open the full graph workspace](/graph/explore) — start from the default view.",
+            "- [Focus on resource relationships](/graph/explore?lens=resources&layout=concentric) — start in a resource-focused lens.",
+        ])
+        for edge in top_relationship_links:
+            source_label = labels_by_id.get(edge.get("source"), edge.get("source", ""))
+            target_label = labels_by_id.get(edge.get("target"), edge.get("target", ""))
+            source_id = edge.get("source", "")
+            target_id = edge.get("target", "")
+            lines.append(
+                f"- [Trace {md_table_cell(source_label)} to {md_table_cell(target_label)}]"
+                f"(/graph/explore?layout=concentric&lens=resources&source={source_id}&target={target_id}&path=1)"
+            )
+        lines.extend([
+            "",
             "## Edge type summary",
             "",
             "| Edge type | Count |",
             "|---|---:|",
-        ]
+        ])
         for edge_type, count in rel_counts.items():
             lines.append(f"| {edge_type} | {count} |")
 
@@ -590,43 +691,49 @@ Do not publish publicly unless content is appropriate for public sharing.
         The viewer is only generated when there is at least one
         node, matching the gating rule for the index page.
         """
+        self._build_graph_template_page(
+            graph, template_name="viewer.md", output_name="viewer.md"
+        )
+
+    def _build_graph_explore_page(self, graph: dict) -> None:
+        """Write the app-style graph workspace page."""
+        self._build_graph_template_page(
+            graph, template_name="explore.md", output_name="explore.md"
+        )
+
+    def _build_graph_template_page(
+        self, graph: dict, *, template_name: str, output_name: str
+    ) -> None:
+        """Render a checked-in graph Markdown template with graph stats."""
         from wiki.graph.viewer import viewer_markdown
 
         nodes = graph.get("nodes", []) or []
         if not nodes:
-            # No nodes: skip viewer (same gating as index page).
             return
 
         graph_dir = self.data_site_dir / "graph"
         graph_dir.mkdir(parents=True, exist_ok=True)
 
-        # Read the in-repo template. The template is checked into
-        # the git repo at ``harish-llm-wiki/site/docs/graph/viewer.md``;
-        # compute that path from the module location rather than
-        # from ``self.repo_site_dir`` (which tests may rebind).
         module_template_path = (
             Path(__file__).parent.parent.parent
             / "site"
             / "docs"
             / "graph"
-            / "viewer.md"
+            / template_name
         )
         template_path = module_template_path
         if not template_path.exists():
-            # Fallback: try the configured repo_site_dir.
-            template_path = self.repo_site_dir / "graph" / "viewer.md"
+            template_path = self.repo_site_dir / "graph" / template_name
         if not template_path.exists():
-            # Defensive: if the template was deleted from the repo
-            # we skip rather than crash the build.
             print(
-                f"  [yellow]⚠[/yellow] Graph viewer template missing: "
+                f"  [yellow]⚠[/yellow] Graph template missing: "
                 f"{template_path}"
             )
             return
 
         template = template_path.read_text(encoding="utf-8")
         rendered = viewer_markdown(graph, template)
-        Storage.write_text(rendered, graph_dir / "viewer.md")
+        Storage.write_text(rendered, graph_dir / output_name)
 
     def _build_chunks_index_page(self) -> None:
         """Build a small Markdown landing page for the chunk index (Prompt 27).

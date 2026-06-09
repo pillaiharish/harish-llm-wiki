@@ -1,8 +1,35 @@
+---
+pageClass: graph-relationships-page
+---
+
 # Resource Relationships
 
 Deterministic resource-to-resource relationships detected at graph build
 time (Prompt 24). Each row corresponds to a single edge in the
 knowledge graph. Scores and reason lists come from the edge metadata.
+
+## Why This Page Matters
+
+These edges show which resources reinforce each other, overlap on
+concepts, or appear to cover adjacent ground. Use this page as a
+summary layer before jumping into the interactive graph workspace.
+
+<div class="graph-stat-grid">
+  <div class="graph-stat-card"><span class="graph-stat-kicker">resource_may_be_prerequisite_for_resource</span><strong>0</strong><span>Relationship edges currently generated for this type.</span></div>
+  <div class="graph-stat-card"><span class="graph-stat-kicker">resource_may_expand_on_resource</span><strong>0</strong><span>Relationship edges currently generated for this type.</span></div>
+  <div class="graph-stat-card"><span class="graph-stat-kicker">resource_same_source_type_as_resource</span><strong>123</strong><span>Relationship edges currently generated for this type.</span></div>
+  <div class="graph-stat-card"><span class="graph-stat-kicker">resource_shares_concept_with_resource</span><strong>190</strong><span>Relationship edges currently generated for this type.</span></div>
+  <div class="graph-stat-card"><span class="graph-stat-kicker">resource_shares_topic_with_resource</span><strong>60</strong><span>Relationship edges currently generated for this type.</span></div>
+  <div class="graph-stat-card"><span class="graph-stat-kicker">resource_similar_to_resource</span><strong>191</strong><span>Relationship edges currently generated for this type.</span></div>
+</div>
+
+## Open In Graph Workspace
+
+- [Open the full graph workspace](/graph/explore) — start from the default view.
+- [Focus on resource relationships](/graph/explore?lens=resources&layout=concentric) — start in a resource-focused lens.
+- [Trace 7 AI Terms You Need to Know: Agents, RAG, ASI & More to Top 3 RAG Retrieval Strategies: Sparse, Dense, & Hybrid Explained](/graph/explore?layout=concentric&lens=resources&source=resource:youtube_VSFuqMh4hus&target=resource:youtube_r0Dciuq0knU&path=1)
+- [Trace Getting Started With Embeddings to 7 AI Terms You Need to Know: Agents, RAG, ASI & More](/graph/explore?layout=concentric&lens=resources&source=resource:webpage_7e46dca0acc3e5be16343595987da50cc15588cd13cbfe86a069fd9d38079216&target=resource:youtube_VSFuqMh4hus&path=1)
+- [Trace Getting Started With Embeddings to Top 3 RAG Retrieval Strategies: Sparse, Dense, & Hybrid Explained](/graph/explore?layout=concentric&lens=resources&source=resource:webpage_7e46dca0acc3e5be16343595987da50cc15588cd13cbfe86a069fd9d38079216&target=resource:youtube_r0Dciuq0knU&path=1)
 
 ## Edge type summary
 
@@ -135,5 +162,5 @@ _Showing top 20 of 191 edges for this type._
 
 ## Provenance
 
-- Generated: 2026-06-08T13:36:42.639347+00:00
+- Generated: 2026-06-09T11:38:56.288122+00:00
 - Detection: deterministic, no LLM, no embeddings, no BM25.
