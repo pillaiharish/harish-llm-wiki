@@ -123,14 +123,30 @@ links above can still be used to browse the graph data.</p>
 
 1. Use the **search** box to filter nodes by label, slug, or id.
 2. Use the **node type** and **edge type** checkboxes to filter by category.
-3. Click **Fit graph** to center the view; click **Reset zoom** to zoom to 1×.
-4. Click **Show all** to render the full graph (otherwise the
+3. Use the **Lens** dropdown to focus on one node category (Resources,
+   Topics, Concepts, Learn chapters, or Review pages); choose **All**
+   to remove the lens.
+4. Use the **Layout** dropdown to switch the canvas layout between
+   `cose` (default, deterministic), `grid`, `circle`, and `concentric`.
+5. Select a node and toggle **Neighborhood mode** to restrict the
+   canvas to the selected node and its directly connected neighbours;
+   click **Exit neighborhood** or tap the background to return to the
+   normal view.
+6. The **Insight dashboard** above the canvas surfaces total /
+   visible node and edge counts, the currently selected node, and the
+   top ten most-connected nodes (click any row to focus that node).
+7. Click **Fit graph** to center the view; click **Reset zoom** to
+   zoom to 1×.
+8. Click **Show all** to render the full graph (otherwise the
    explorer shows the top 50 nodes by degree).
-5. Click a node in the canvas, the list, or the neighbor list to
-   see its details, neighbors, and incoming/outgoing edges.
-6. Click an edge in the canvas to see its source, target, type, and metadata.
-7. Drag nodes to rearrange them, use the mouse wheel to zoom, and
-   click-drag the empty canvas to pan.
+9. Click a node in the canvas, the list, or the neighbor list to
+   see its details, neighbors, and incoming/outgoing edges. The
+   details panel also shows the incoming / outgoing / total degree
+   counts and a **Copy node id** button.
+10. Click an edge in the canvas to see its source, target, type, and
+    metadata.
+11. Drag nodes to rearrange them, use the mouse wheel to zoom, and
+    click-drag the empty canvas to pan.
 
 ## Provenance
 

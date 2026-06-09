@@ -1177,3 +1177,288 @@ test('Prompt 35.3: no duplicate DOM ids at any time after semantic zoom', async 
   })
   expect(dupes, `found duplicate DOM ids: ${dupes.join(', ')}`).toEqual([])
 })
+
+// ---------------------------------------------------------------------------
+// Prompt 38 — Insight Dashboard + Graph Lenses v1
+// ---------------------------------------------------------------------------
+
+/**
+ * Helper: wait for the Prompt 38 ``window.__graphExplorerState``
+ * debug handle to be set so the lens / layout / neighborhood /
+ * counts can be inspected from page.evaluate.
+ */
+async function gotoViewerWithExplorerState(page: Page) {
+  await gotoViewerWithCy(page)
+  await page.waitForFunction(
+    () => {
+      const s = (window as any).__graphExplorerState
+      return s && s.ready === true
+    },
+    null,
+    { timeout: 15_000 }
+  )
+}
+
+test('Prompt 38 dashboard: total node and edge counts match the JSON', async ({ page }) => {
+  await gotoViewerWithExplorerState(page)
+  const ctx = await request.newContext({ baseURL: 'http://127.0.0.1:5173' })
+  const resp = await ctx.get('/graph/knowledge_graph.json')
+  const body = await resp.json()
+  await ctx.dispose()
+  const expectedNodes: number = body.stats?.node_count ?? body.nodes.length
+  const expectedEdges: number = body.stats?.edge_count ?? body.edges.length
+  await expect(page.locator('#graph-stat-total-nodes')).toHaveText(String(expectedNodes))
+  await expect(page.locator('#graph-stat-total-edges')).toHaveText(String(expectedEdges))
+})
+
+test('Prompt 38 dashboard: visible node count reflects current filters', async ({ page }) => {
+  await gotoViewerWithExplorerState(page)
+  const before = await page.locator('#graph-stat-visible-nodes').innerText()
+  // Switch the lens to resources; visible count must change to a
+  // strict subset (or stay at zero — but for the canonical graph
+  // there are >= 1 resource nodes).
+  await page.locator('#graph-lens').selectOption('resources')
+  await page.waitForTimeout(400)
+  const afterText = await page.locator('#graph-stat-visible-nodes').innerText()
+  expect(Number.isFinite(Number(afterText))).toBe(true)
+  // Reset to all and confirm the count returns.
+  await page.locator('#graph-lens').selectOption('all')
+  await page.waitForTimeout(400)
+  const restored = await page.locator('#graph-stat-visible-nodes').innerText()
+  expect(restored).toBe(before)
+})
+
+test('Prompt 38 dashboard: top-connected list is rendered and clickable', async ({ page }) => {
+  await gotoViewerWithExplorerState(page)
+  const topList = page.locator('#graph-stat-top-nodes')
+  await expect(topList).toBeVisible()
+  const items = topList.locator('li[data-node-id]')
+  const itemCount = await items.count()
+  expect(itemCount, 'top connected list must have at least one row').toBeGreaterThan(0)
+  // Click the first row and verify the selected node id flows
+  // into the dashboard's Selected field.
+  const firstId = await items.first().getAttribute('data-node-id')
+  expect(firstId).toBeTruthy()
+  await items.first().locator('button').click()
+  await page.waitForTimeout(250)
+  const selectedAttr = await page.locator('#graph-stat-selected').getAttribute('data-selected-id')
+  expect(selectedAttr).toBe(firstId)
+})
+
+test('Prompt 38 lens: selector has six options and default is "all"', async ({ page }) => {
+  await gotoViewerWithExplorerState(page)
+  const select = page.locator('#graph-lens')
+  await expect(select).toBeVisible()
+  const optionCount = await select.locator('option').count()
+  expect(optionCount).toBe(6)
+  await expect(select).toHaveValue('all')
+})
+
+test('Prompt 38 lens: switching to "resources" filters non-resource nodes', async ({ page }) => {
+  await gotoViewerWithExplorerState(page)
+  await page.locator('#graph-lens').selectOption('resources')
+  await page.waitForTimeout(400)
+  const counts = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    let total = 0
+    let nonResource = 0
+    cy.nodes().forEach((n: any) => {
+      total += 1
+      if (n.data('type') !== 'resource') nonResource += 1
+    })
+    return { total, nonResource }
+  })
+  expect(counts.total, 'resources lens must keep at least one node').toBeGreaterThan(0)
+  expect(counts.nonResource, 'resources lens must exclude non-resource nodes').toBe(0)
+})
+
+test('Prompt 38 lens: switching back to "all" restores the visible set', async ({ page }) => {
+  await gotoViewerWithExplorerState(page)
+  const before = await page.evaluate(
+    () => ((window as any).__graphCy.nodes().length as number)
+  )
+  await page.locator('#graph-lens').selectOption('resources')
+  await page.waitForTimeout(400)
+  await page.locator('#graph-lens').selectOption('all')
+  await page.waitForTimeout(400)
+  const after = await page.evaluate(
+    () => ((window as any).__graphCy.nodes().length as number)
+  )
+  expect(after).toBe(before)
+})
+
+test('Prompt 38 layout: selector has four options and default is "cose"', async ({ page }) => {
+  await gotoViewerWithExplorerState(page)
+  const select = page.locator('#graph-layout')
+  await expect(select).toBeVisible()
+  const optionCount = await select.locator('option').count()
+  expect(optionCount).toBe(4)
+  await expect(select).toHaveValue('cose')
+})
+
+test('Prompt 38 layout: switching to grid / circle / concentric preserves node count', async ({ page }) => {
+  await gotoViewerWithExplorerState(page)
+  const before = await page.evaluate(
+    () => ((window as any).__graphCy.nodes().length as number)
+  )
+  for (const layout of ['grid', 'circle', 'concentric', 'cose']) {
+    await page.locator('#graph-layout').selectOption(layout)
+    await page.waitForTimeout(400)
+    const after = await page.evaluate(
+      () => ((window as any).__graphCy.nodes().length as number)
+    )
+    expect(after, `node count should be preserved after switching to ${layout}`).toBe(before)
+  }
+})
+
+test('Prompt 38 neighborhood mode: button is disabled with no selection', async ({ page }) => {
+  await gotoViewerWithExplorerState(page)
+  const btn = page.locator('#graph-neighborhood-mode')
+  await expect(btn).toBeVisible()
+  await expect(btn).toBeDisabled()
+})
+
+test('Prompt 38 neighborhood mode: enabled after selecting a node, restricts cy.nodes()', async ({ page }) => {
+  await gotoViewerWithExplorerState(page)
+  // Pick a node with at least one neighbor so the closed
+  // neighbourhood is non-trivial.
+  const targetId = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    for (let i = 0; i < cy.nodes().length; i++) {
+      const n = cy.nodes()[i]
+      if (n.neighborhood().length > 0) return n.id() as string
+    }
+    return cy.nodes()[0].id() as string
+  })
+  await page.evaluate((id: string) => {
+    const cy = (window as any).__graphCy
+    cy.getElementById(id).emit('tap')
+  }, targetId)
+  await page.waitForTimeout(250)
+  const btn = page.locator('#graph-neighborhood-mode')
+  await expect(btn).toBeEnabled()
+  const before = await page.evaluate(
+    () => ((window as any).__graphCy.nodes().length as number)
+  )
+  await btn.click()
+  await page.waitForTimeout(400)
+  const after = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    return cy.nodes().length as number
+  })
+  const expected = await page.evaluate((id: string) => {
+    // The graph data is exposed indirectly via cy. We compute the
+    // expected count from the loaded JSON via fetch.
+    return (async () => {
+      const url = '/graph/knowledge_graph.json'
+      const resp = await fetch(url)
+      const body = await resp.json()
+      const incident = new Set<string>([id])
+      for (const e of body.edges) {
+        if (e.source === id) incident.add(e.target)
+        else if (e.target === id) incident.add(e.source)
+      }
+      return incident.size
+    })()
+  }, targetId)
+  expect(after, 'neighborhood mode should restrict to the closed neighbourhood').toBe(expected)
+  expect(after, 'neighborhood mode should not show the whole graph').toBeLessThanOrEqual(before)
+  // Exit neighborhood mode and confirm the count is restored.
+  await page.locator('#graph-neighborhood-exit').click()
+  await page.waitForTimeout(400)
+  const restored = await page.evaluate(
+    () => ((window as any).__graphCy.nodes().length as number)
+  )
+  expect(restored).toBe(before)
+})
+
+test('Prompt 38 neighborhood mode: background tap auto-disables the mode', async ({ page }) => {
+  await gotoViewerWithExplorerState(page)
+  const targetId = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    for (let i = 0; i < cy.nodes().length; i++) {
+      const n = cy.nodes()[i]
+      if (n.neighborhood().length > 0) return n.id() as string
+    }
+    return cy.nodes()[0].id() as string
+  })
+  await page.evaluate((id: string) => {
+    const cy = (window as any).__graphCy
+    cy.getElementById(id).emit('tap')
+  }, targetId)
+  await page.waitForTimeout(150)
+  await page.locator('#graph-neighborhood-mode').click()
+  await page.waitForTimeout(400)
+  // Now emit a background tap (target === cy).
+  await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    cy.emit('tap', { target: cy })
+  })
+  await page.waitForTimeout(300)
+  const state = await page.evaluate(() => (window as any).__graphExplorerState)
+  expect(state.neighborhoodMode, 'background tap must auto-disable neighborhood mode').toBe(false)
+})
+
+test('Prompt 38 details panel: incoming / outgoing / degree counts match', async ({ page }) => {
+  await gotoViewerWithExplorerState(page)
+  const targetId = await page.evaluate(() => {
+    const cy = (window as any).__graphCy
+    for (let i = 0; i < cy.nodes().length; i++) {
+      const n = cy.nodes()[i]
+      if (n.neighborhood().length > 0) return n.id() as string
+    }
+    return cy.nodes()[0].id() as string
+  })
+  await page.evaluate((id: string) => {
+    const cy = (window as any).__graphCy
+    cy.getElementById(id).emit('tap')
+  }, targetId)
+  await page.waitForTimeout(300)
+  const expected = await page.evaluate((id: string) => {
+    const cy = (window as any).__graphCy
+    let incoming = 0
+    let outgoing = 0
+    cy.edges().forEach((e: any) => {
+      if (e.data('source') === id) outgoing += 1
+      else if (e.data('target') === id) incoming += 1
+    })
+    return { incoming, outgoing, degree: incoming + outgoing }
+  }, targetId)
+  const inText = await page.locator('#graph-stat-incoming').innerText()
+  const outText = await page.locator('#graph-stat-outgoing').innerText()
+  const degText = await page.locator('#graph-stat-degree').innerText()
+  expect(Number(inText)).toBe(expected.incoming)
+  expect(Number(outText)).toBe(expected.outgoing)
+  expect(Number(degText)).toBe(expected.degree)
+})
+
+test('Prompt 38 details panel: Copy node id button is present when a node is selected', async ({ page }) => {
+  await gotoViewerWithExplorerState(page)
+  // No selection yet — the button must not exist.
+  await expect(page.locator('#graph-copy-node-id')).toHaveCount(0)
+  const targetId = await page.evaluate(
+    () => ((window as any).__graphCy.nodes()[0].id() as string)
+  )
+  await page.evaluate((id: string) => {
+    const cy = (window as any).__graphCy
+    cy.getElementById(id).emit('tap')
+  }, targetId)
+  await page.waitForTimeout(200)
+  const btn = page.locator('#graph-copy-node-id')
+  await expect(btn).toBeVisible()
+  await expect(btn).toHaveAttribute('data-selected-id', targetId)
+})
+
+test('Prompt 38 explorer state: window.__graphExplorerState reports lens / layout / neighborhood', async ({ page }) => {
+  await gotoViewerWithExplorerState(page)
+  const state = await page.evaluate(() => (window as any).__graphExplorerState)
+  expect(state).toBeTruthy()
+  expect(state.lens).toBe('all')
+  expect(state.layout).toBe('cose')
+  expect(state.neighborhoodMode).toBe(false)
+  expect(typeof state.totalNodes).toBe('number')
+  expect(typeof state.totalEdges).toBe('number')
+  expect(typeof state.visibleNodes).toBe('number')
+  expect(typeof state.visibleEdges).toBe('number')
+  expect(Array.isArray(state.topConnectedIds)).toBe(true)
+})

@@ -37,7 +37,27 @@ type NeighborItem = {
   direction: 'out' | 'in'
 }
 
+type LensValue =
+  | 'all'
+  | 'resources'
+  | 'topics'
+  | 'concepts'
+  | 'learn_chapters'
+  | 'review_pages'
+
+type LayoutValue = 'cose' | 'grid' | 'circle' | 'concentric'
+
+const LENS_TO_TYPE: Record<LensValue, string | null> = {
+  all: null,
+  resources: 'resource',
+  topics: 'topic',
+  concepts: 'concept',
+  learn_chapters: 'learn_chapter',
+  review_pages: 'review_page',
+}
+
 const TOP_N_DEFAULT = 50
+const TOP_CONNECTED_COUNT = 10
 
 const FIT_PADDING = 40
 
@@ -105,6 +125,10 @@ const currentTier = ref<SemanticTier>('medium')
 
 const nodeTypeFilter = ref<Set<string>>(new Set())
 const edgeTypeFilter = ref<Set<string>>(new Set())
+
+const lens = ref<LensValue>('all')
+const layoutName = ref<LayoutValue>('cose')
+const neighborhoodMode = ref<boolean>(false)
 
 const canvasRef = ref<HTMLDivElement | null>(null)
 let cy: any = null
@@ -194,16 +218,39 @@ function topNodeIds(n: number): string[] {
   return arr.slice(0, n).map((x) => x.id)
 }
 
+function lensAllowsType(t: string): boolean {
+  const allowed = LENS_TO_TYPE[lens.value]
+  if (!allowed) return true
+  return t === allowed
+}
+
+function closedNeighborhoodIds(nodeId: string): string[] {
+  if (!graph.value) return []
+  const result = new Set<string>([nodeId])
+  for (const e of graph.value.edges) {
+    if (!edgeTypeFilter.value.has(e.type)) continue
+    if (e.source === nodeId) result.add(e.target)
+    else if (e.target === nodeId) result.add(e.source)
+  }
+  return Array.from(result)
+}
+
 function visibleNodeIds(): string[] {
   if (!graph.value) return []
-  const base = showAll.value
-    ? graph.value.nodes.map((n) => n.id)
-    : topNodeIds(TOP_N_DEFAULT)
+  let base: string[]
+  if (neighborhoodMode.value && selectedNodeId.value) {
+    base = closedNeighborhoodIds(selectedNodeId.value)
+  } else if (showAll.value) {
+    base = graph.value.nodes.map((n) => n.id)
+  } else {
+    base = topNodeIds(TOP_N_DEFAULT)
+  }
   const q = searchTerm.value.trim().toLowerCase()
   return base.filter((id) => {
     const n = nodeById(id)
     if (!n) return false
     if (!nodeTypeFilter.value.has(n.type)) return false
+    if (!lensAllowsType(n.type)) return false
     if (!q) return true
     const hay = `${n.label || ''} ${n.slug || ''} ${n.id || ''}`.toLowerCase()
     return hay.indexOf(q) !== -1
@@ -474,6 +521,48 @@ function coseLayoutOptions() {
   }
 }
 
+function layoutOptionsFor(name: LayoutValue) {
+  // Prompt 38: the layout selector exposes four cytoscape
+  // built-ins. The cose branch delegates to coseLayoutOptions()
+  // so the Prompt 35.1 deterministic contract (randomize:
+  // false, numIter: 2500) is preserved. The other three branches
+  // are presentational fallbacks that use cytoscape defaults
+  // with a shared padding so cy.fit() lands the graph the same
+  // way regardless of which layout produced the positions.
+  if (name === 'grid') {
+    return {
+      name: 'grid',
+      fit: false,
+      animate: false,
+      padding: FIT_PADDING,
+      avoidOverlap: true,
+    }
+  }
+  if (name === 'circle') {
+    return {
+      name: 'circle',
+      fit: false,
+      animate: false,
+      padding: FIT_PADDING,
+      avoidOverlap: true,
+      startAngle: -Math.PI / 2,
+    }
+  }
+  if (name === 'concentric') {
+    return {
+      name: 'concentric',
+      fit: false,
+      animate: false,
+      padding: FIT_PADDING,
+      avoidOverlap: true,
+      minNodeSpacing: 24,
+      concentric: (n: any) => n.degree(true),
+      levelWidth: () => 1,
+    }
+  }
+  return coseLayoutOptions()
+}
+
 function pickSemanticTier(z: number): SemanticTier {
   if (z <= ZOOM_TIER_LOW_MAX) return 'low'
   if (z >= ZOOM_TIER_HIGH_MIN) return 'high'
@@ -624,7 +713,7 @@ function buildCy() {
     container: canvasRef.value,
     elements: cyElements(),
     style: makeStyle(),
-    layout: coseLayoutOptions(),
+    layout: layoutOptionsFor(layoutName.value),
     wheelSensitivity: 0.2,
     minZoom: 0.1,
     maxZoom: 4,
@@ -636,6 +725,13 @@ function buildCy() {
     selectedEdgeId.value = null
     highlightSelection()
     applySemanticZoom()
+    // Prompt 38: a node tap in neighborhood mode re-filters the
+    // visible set to the new closed neighbourhood.
+    if (neighborhoodMode.value) {
+      reRenderCy()
+    } else {
+      updateExplorerStateDebug()
+    }
   })
   cy.on('tap', 'edge', (evt: any) => {
     const e = evt.target
@@ -644,6 +740,15 @@ function buildCy() {
     selectedNodeId.value = null
     highlightSelection()
     applySemanticZoom()
+    // Prompt 38: tapping an edge clears the node selection;
+    // neighborhood mode auto-disables to keep the UI consistent
+    // (no selected node ⇒ no closed neighbourhood to show).
+    if (neighborhoodMode.value) {
+      neighborhoodMode.value = false
+      reRenderCy()
+    } else {
+      updateExplorerStateDebug()
+    }
   })
   cy.on('tap', (evt: any) => {
     if (evt.target === cy) {
@@ -651,6 +756,15 @@ function buildCy() {
       selectedEdgeId.value = null
       highlightSelection()
       applySemanticZoom()
+      // Prompt 38: deselecting (background tap) must auto-disable
+      // neighborhood mode — otherwise the canvas would be empty
+      // and the user would see no graph at all.
+      if (neighborhoodMode.value) {
+        neighborhoodMode.value = false
+        reRenderCy()
+      } else {
+        updateExplorerStateDebug()
+      }
     }
   })
   cy.on('mouseover', 'node', (evt: any) => {
@@ -705,6 +819,11 @@ function buildCy() {
   cy.fit(undefined, FIT_PADDING)
   applySemanticZoom()
   setupResizeObserver()
+  // Prompt 38: expose a small debug handle so Playwright tests
+  // can read the lens / layout / neighborhood / counts in
+  // page.evaluate without DOM scraping. Cleaned up next to
+  // __graphLabelDebug in onBeforeUnmount().
+  updateExplorerStateDebug()
 }
 
 function highlightSelection() {
@@ -742,13 +861,14 @@ function reRenderCy() {
   cy.elements().remove()
   cy.add(els)
   if (changed) {
-    cy.layout(coseLayoutOptions()).run()
+    cy.layout(layoutOptionsFor(layoutName.value)).run()
     lastNodeIdSet = visibleNodeIds().sort().join('|')
   }
   cy.fit(undefined, FIT_PADDING)
   currentZoom.value = cy.zoom()
   highlightSelection()
   applySemanticZoom()
+  updateExplorerStateDebug()
 }
 
 function fitGraph() {
@@ -816,6 +936,119 @@ function pickNeighbor(id: string) {
   selectedEdgeId.value = null
   highlightSelection()
   applySemanticZoom()
+  // Prompt 38: when neighborhood mode is active, switching the
+  // selected node must update the visible filter so the new
+  // closed neighbourhood is shown. reRenderCy() composes with
+  // highlightSelection()/applySemanticZoom() already called above.
+  if (neighborhoodMode.value) {
+    reRenderCy()
+  }
+}
+
+function onLensChange(ev: Event) {
+  const target = ev.target as HTMLSelectElement
+  lens.value = (target.value as LensValue) || 'all'
+  reRenderCy()
+}
+
+function onLayoutChange(ev: Event) {
+  const target = ev.target as HTMLSelectElement
+  layoutName.value = (target.value as LayoutValue) || 'cose'
+  if (!cy) return
+  // Re-run only the layout (the visible element set has not
+  // changed). cy.fit() afterwards keeps the new layout framed.
+  cy.layout(layoutOptionsFor(layoutName.value)).run()
+  cy.fit(undefined, FIT_PADDING)
+  currentZoom.value = cy.zoom()
+  applySemanticZoom()
+  updateExplorerStateDebug()
+}
+
+function toggleNeighborhoodMode() {
+  if (!selectedNodeId.value) {
+    // Disabled when nothing is selected; a deterministic
+    // no-op keeps the button safe to click via tests.
+    neighborhoodMode.value = false
+    updateExplorerStateDebug()
+    return
+  }
+  neighborhoodMode.value = !neighborhoodMode.value
+  reRenderCy()
+}
+
+function exitNeighborhoodMode() {
+  if (!neighborhoodMode.value) return
+  neighborhoodMode.value = false
+  reRenderCy()
+}
+
+function incomingCountFor(id: string | null): number {
+  if (!id || !graph.value) return 0
+  let n = 0
+  for (const e of graph.value.edges) {
+    if (!edgeTypeFilter.value.has(e.type)) continue
+    if (e.target === id) n += 1
+  }
+  return n
+}
+
+function outgoingCountFor(id: string | null): number {
+  if (!id || !graph.value) return 0
+  let n = 0
+  for (const e of graph.value.edges) {
+    if (!edgeTypeFilter.value.has(e.type)) continue
+    if (e.source === id) n += 1
+  }
+  return n
+}
+
+async function copySelectedId() {
+  const id = selectedNodeId.value
+  if (!id) return
+  if (typeof navigator !== 'undefined' && navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(id)
+      return
+    } catch {
+      // Fall through to legacy fallback below.
+    }
+  }
+  if (typeof document === 'undefined') return
+  try {
+    const ta = document.createElement('textarea')
+    ta.value = id
+    ta.setAttribute('readonly', '')
+    ta.style.position = 'absolute'
+    ta.style.left = '-9999px'
+    document.body.appendChild(ta)
+    ta.select()
+    try {
+      document.execCommand('copy')
+    } catch {
+      // Swallow — copy is best-effort and never required to
+      // succeed for the rest of the UI to work.
+    }
+    document.body.removeChild(ta)
+  } catch {
+    // Final fallback: do nothing.
+  }
+}
+
+function updateExplorerStateDebug() {
+  if (typeof window === 'undefined') return
+  ;(window as any).__graphExplorerState = {
+    ready: !!graph.value,
+    lens: lens.value,
+    layout: layoutName.value,
+    neighborhoodMode: neighborhoodMode.value,
+    selectedNodeId: selectedNodeId.value,
+    selectedEdgeId: selectedEdgeId.value,
+    totalNodes: graph.value ? graph.value.nodes.length : 0,
+    totalEdges: graph.value ? graph.value.edges.length : 0,
+    visibleNodes: visibleNodeIds().length,
+    visibleEdges: visibleEdgeCount.value,
+    topConnectedIds: topConnectedIds.value,
+  }
 }
 
 function setupResizeObserver() {
@@ -922,6 +1155,7 @@ onBeforeUnmount(() => {
   if (typeof window !== 'undefined') {
     delete (window as any).__graphCy
     delete (window as any).__graphLabelDebug
+    delete (window as any).__graphExplorerState
   }
 })
 
@@ -934,6 +1168,59 @@ const visibleNodeList = computed<GraphNode[]>(() => {
 const selectedNode = computed<GraphNode | null>(() => nodeById(selectedNodeId.value))
 const selectedEdge = computed<GraphEdge | null>(() => edgeById(selectedEdgeId.value))
 const neighborList = computed<NeighborItem[]>(() => neighborsOf(selectedNodeId.value))
+
+// Prompt 38: Insight Dashboard computed values.
+const totalNodeCount = computed<number>(() => {
+  if (!graph.value) return 0
+  const s = graph.value.stats || {}
+  return typeof s.node_count === 'number' ? s.node_count : graph.value.nodes.length
+})
+const totalEdgeCount = computed<number>(() => {
+  if (!graph.value) return 0
+  const s = graph.value.stats || {}
+  return typeof s.edge_count === 'number' ? s.edge_count : graph.value.edges.length
+})
+const visibleNodeCount = computed<number>(() => visibleNodeList.value.length)
+const visibleEdgeCount = computed<number>(() => {
+  if (!graph.value) return 0
+  const ids = new Set(visibleNodeList.value.map((n) => n.id))
+  let n = 0
+  for (const e of graph.value.edges) {
+    if (!edgeTypeFilter.value.has(e.type)) continue
+    if (ids.has(e.source) && ids.has(e.target)) n += 1
+  }
+  return n
+})
+// Top connected nodes are computed across the *full* graph
+// (independent of the lens / neighborhood / search). The
+// dashboard intentionally reflects the global picture; the
+// canvas reflects the focused view.
+const topConnectedIds = computed<string[]>(() => {
+  if (!graph.value) return []
+  return topNodeIds(TOP_CONNECTED_COUNT)
+})
+const topConnectedNodes = computed<{ node: GraphNode; degree: number }[]>(() => {
+  return topConnectedIds.value
+    .map((id) => {
+      const n = nodeById(id)
+      return n ? { node: n, degree: degree(id) } : null
+    })
+    .filter((x): x is { node: GraphNode; degree: number } => !!x)
+})
+const selectedIncomingCount = computed<number>(() =>
+  incomingCountFor(selectedNodeId.value)
+)
+const selectedOutgoingCount = computed<number>(() =>
+  outgoingCountFor(selectedNodeId.value)
+)
+const selectedDegree = computed<number>(
+  () => selectedIncomingCount.value + selectedOutgoingCount.value
+)
+const selectedDisplay = computed<string>(() => {
+  const n = selectedNode.value
+  if (!n) return 'None'
+  return n.label || n.id
+})
 </script>
 
 <template>
@@ -983,6 +1270,95 @@ const neighborList = computed<NeighborItem[]>(() => neighborsOf(selectedNodeId.v
           {{ t }}
         </label>
       </fieldset>
+      <label for="graph-lens" class="ge-label">Lens:</label>
+      <select id="graph-lens" :value="lens" @change="onLensChange">
+        <option value="all">All</option>
+        <option value="resources">Resources</option>
+        <option value="topics">Topics</option>
+        <option value="concepts">Concepts</option>
+        <option value="learn_chapters">Learn chapters</option>
+        <option value="review_pages">Review pages</option>
+      </select>
+      <label for="graph-layout" class="ge-label">Layout:</label>
+      <select id="graph-layout" :value="layoutName" @change="onLayoutChange">
+        <option value="cose">cose</option>
+        <option value="grid">grid</option>
+        <option value="circle">circle</option>
+        <option value="concentric">concentric</option>
+      </select>
+      <button
+        id="graph-neighborhood-mode"
+        type="button"
+        :data-state="neighborhoodMode ? 'on' : 'off'"
+        :disabled="!selectedNodeId"
+        :aria-disabled="!selectedNodeId ? 'true' : 'false'"
+        :title="selectedNodeId ? 'Toggle neighborhood mode' : 'Select a node to enable neighborhood mode'"
+        @click="toggleNeighborhoodMode"
+      >Neighborhood mode: {{ neighborhoodMode ? 'on' : 'off' }}</button>
+      <button
+        v-if="neighborhoodMode"
+        id="graph-neighborhood-exit"
+        type="button"
+        title="Exit neighborhood mode"
+        @click="exitNeighborhoodMode"
+      >Exit neighborhood</button>
+    </div>
+
+    <div id="graph-dashboard" class="ge-dashboard" :data-state="dataState">
+      <h3>Insight dashboard</h3>
+      <div v-if="dataState === 'loading'" id="graph-dashboard-loading">
+        <em>Loading dashboard…</em>
+      </div>
+      <div v-else-if="dataState === 'error'" id="graph-dashboard-error">
+        <em>Dashboard unavailable (graph failed to load).</em>
+      </div>
+      <div v-else id="graph-dashboard-body">
+        <ul class="ge-stats">
+          <li>
+            <span class="ge-stat-label">Total nodes:</span>
+            <span id="graph-stat-total-nodes" class="ge-stat-value">{{ totalNodeCount }}</span>
+          </li>
+          <li>
+            <span class="ge-stat-label">Total edges:</span>
+            <span id="graph-stat-total-edges" class="ge-stat-value">{{ totalEdgeCount }}</span>
+          </li>
+          <li>
+            <span class="ge-stat-label">Visible nodes:</span>
+            <span id="graph-stat-visible-nodes" class="ge-stat-value">{{ visibleNodeCount }}</span>
+          </li>
+          <li>
+            <span class="ge-stat-label">Visible edges:</span>
+            <span id="graph-stat-visible-edges" class="ge-stat-value">{{ visibleEdgeCount }}</span>
+          </li>
+          <li>
+            <span class="ge-stat-label">Selected:</span>
+            <span id="graph-stat-selected" class="ge-stat-value" :data-selected-id="selectedNodeId || ''">{{ selectedDisplay }}</span>
+          </li>
+        </ul>
+        <h4>Top connected nodes</h4>
+        <ol id="graph-stat-top-nodes" :data-count="topConnectedNodes.length">
+          <li
+            v-for="entry in topConnectedNodes"
+            :key="entry.node.id"
+            :data-node-id="entry.node.id"
+            :data-degree="entry.degree"
+          >
+            <button
+              type="button"
+              class="gn-pick"
+              :data-node-id="entry.node.id"
+              @click="pickNeighbor(entry.node.id)"
+            >
+              <span class="gn-type">{{ entry.node.type }}</span>
+              <span class="gn-label">{{ entry.node.label || entry.node.id }}</span>
+              <small>(degree: {{ entry.degree }})</small>
+            </button>
+          </li>
+        </ol>
+        <p v-if="neighborhoodMode && !selectedNodeId" id="graph-neighborhood-empty-message">
+          <em>Neighborhood mode is on, but no node is selected. Select a node in the canvas or the list to focus the closed neighbourhood.</em>
+        </p>
+      </div>
     </div>
 
     <div id="graph-canvas" ref="canvasRef" class="ge-canvas"></div>
@@ -1021,6 +1397,23 @@ const neighborList = computed<NeighborItem[]>(() => neighborsOf(selectedNodeId.v
             <strong>ID:</strong> <code>{{ selectedNode.id }}</code><br />
             <strong>Type:</strong> {{ selectedNode.type }}<br />
             <strong>Slug:</strong> {{ selectedNode.slug || '' }}
+          </p>
+          <p>
+            <strong>Incoming edges:</strong>
+            <span id="graph-stat-incoming" :data-selected-id="selectedNode.id">{{ selectedIncomingCount }}</span><br />
+            <strong>Outgoing edges:</strong>
+            <span id="graph-stat-outgoing" :data-selected-id="selectedNode.id">{{ selectedOutgoingCount }}</span><br />
+            <strong>Total degree:</strong>
+            <span id="graph-stat-degree" :data-selected-id="selectedNode.id">{{ selectedDegree }}</span>
+          </p>
+          <p>
+            <button
+              id="graph-copy-node-id"
+              type="button"
+              :data-selected-id="selectedNode.id"
+              title="Copy selected node id to clipboard"
+              @click="copySelectedId"
+            >Copy node id</button>
           </p>
           <p v-if="nodeRoute(selectedNode)">
             Open in wiki:
@@ -1133,6 +1526,50 @@ const neighborList = computed<NeighborItem[]>(() => neighborsOf(selectedNodeId.v
 .ge-controls legend {
   font-weight: 600;
   padding: 0 0.25rem;
+}
+.ge-controls select {
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--vp-c-divider, #ccc);
+  border-radius: 4px;
+  background: var(--vp-c-bg, #fff);
+  cursor: pointer;
+}
+.ge-controls button[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ge-dashboard {
+  flex: 1 1 100%;
+  border: 1px solid var(--vp-c-divider, #ddd);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  background: var(--vp-c-bg-soft, #fafafa);
+}
+.ge-dashboard h3 {
+  margin: 0 0 0.4rem;
+}
+.ge-stats {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.5rem;
+}
+.ge-stats li {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+}
+.ge-stat-label {
+  font-weight: 600;
+}
+.ge-stat-value {
+  font-variant-numeric: tabular-nums;
+}
+#graph-stat-top-nodes {
+  margin: 0;
+  padding-left: 1.2rem;
 }
 .ge-checkbox {
   margin-right: 0.75rem;
