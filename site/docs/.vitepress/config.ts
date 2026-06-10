@@ -19,19 +19,34 @@ export default defineConfig({
     // https://vitepress.dev/reference/default-theme-config
     nav: [
       { text: 'Home', link: '/' },
-      { text: 'Resources', link: '/resources/' },
-      { text: 'Topics', link: '/topics/' },
       { text: 'Learn', link: '/learn/' },
-      { text: 'Explorer', link: '/explorer/' },
+      { text: 'Resources', link: '/resources/' },
       { text: 'Graph', link: '/graph/' },
-      { text: 'Review', link: '/review/' },
-      { text: 'Revision', link: '/revision/' },
-      { text: 'Sources', link: '/sources/' },
-      { text: 'Timeline', link: '/timeline' },
-      { text: 'Concepts', link: '/concepts/' },
-      { text: 'Tags', link: '/tags/' },
-      { text: 'Gaps', link: '/gaps' },
-      { text: 'Chunks', link: '/chunks/' }
+      { text: 'Explorer', link: '/explorer/' },
+      {
+        text: 'Knowledge',
+        items: [
+          { text: 'Topics', link: '/topics/' },
+          { text: 'Concepts', link: '/concepts/' },
+          { text: 'Tags', link: '/tags/' },
+          { text: 'Sources', link: '/sources/' },
+        ],
+      },
+      {
+        text: 'Quality',
+        items: [
+          { text: 'Review', link: '/review/' },
+          { text: 'Revision', link: '/revision/' },
+          { text: 'Gaps', link: '/gaps' },
+        ],
+      },
+      {
+        text: 'Data',
+        items: [
+          { text: 'Timeline', link: '/timeline' },
+          { text: 'Chunks', link: '/chunks/' },
+        ],
+      }
     ],
 
     sidebar: {

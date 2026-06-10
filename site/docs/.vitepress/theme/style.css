@@ -1,3 +1,23 @@
+.VPNavBar .content,
+.VPNavBar .content-body {
+  min-width: 0;
+  max-width: 100vw;
+}
+
+.VPNavBar .content-body {
+  overflow: visible;
+}
+
+.VPNavBarMenu {
+  min-width: 0;
+  flex-wrap: nowrap;
+}
+
+.VPNavBarMenu .VPNavBarMenuLink,
+.VPNavBarMenu .VPNavBarMenuGroup {
+  flex: 0 0 auto;
+}
+
 .graph-landing-page .graph-cta-grid,
 .graph-relationships-page .graph-stat-grid {
   display: grid;
