@@ -99,4 +99,4 @@ in the wiki build rather than by a runtime inference layer.
 
 ## Provenance
 
-- Generated: 2026-06-10T16:37:55.676578+00:00
+- Generated: 2026-06-10T19:49:15.385239+00:00
