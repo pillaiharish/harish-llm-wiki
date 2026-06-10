@@ -2702,6 +2702,7 @@ def smoke_site():
         ("Gaps page", site_dir / "gaps.md"),
         ("Home page", site_dir / "index.md"),
         ("Graph workspace", site_dir / "graph" / "explore.md"),
+        ("Graphify explorer", site_dir / "graph" / "graphify.md"),
         ("Graph viewer", site_dir / "graph" / "viewer.md"),
     ]
 
@@ -3007,6 +3008,7 @@ def validate(
         ("Timeline page", site_builder.repo_site_dir / "timeline.md"),
         ("Gaps page", site_builder.repo_site_dir / "gaps.md"),
         ("graph workspace", site_builder.repo_site_dir / "graph" / "explore.md"),
+        ("graphify explorer", site_builder.repo_site_dir / "graph" / "graphify.md"),
         ("graph viewer", site_builder.repo_site_dir / "graph" / "viewer.md"),
         ("chunks index page", site_builder.repo_site_dir / "chunks" / "index.md"),
         ("chunks public chunks.json", site_builder.repo_site_dir / "public" / "chunks" / "chunks.json"),
