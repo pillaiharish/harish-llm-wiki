@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -133,15 +134,28 @@ class ReviewGenerator:
         }
         lines = ["# Review Dashboard", "", "## Summary", "", "| Category | Count |", "|---|---:|"]
         lines.extend(f"| {key} | {value} |" for key, value in summary.items())
-        lines.extend(["", "## Priority review queue", "", "| Priority | Resource | Reason | Status | Link |", "|---|---|---|---|---|"])
-        queue = [("High", item) for item in data["failed"]] + [("High", item) for item in data["fallback"]] + [("Medium", item) for item in data["weak"]]
-        for priority, item in queue[:50]:
-            lines.append(
-                f"| {priority} | {md_table_cell(item['title'])} | {md_table_cell(item.get('reason'))} | "
-                f"{md_table_cell(item['status'])} | [Open]({item['page']}) |"
-            )
+        lines.extend(
+            [
+                "",
+                "## Priority review queue",
+                "",
+                "These items need the fastest manual pass. Reasons are shown in",
+                "human-readable form first, with the raw machine signal preserved",
+                "for provenance.",
+                "",
+                '<div class="review-priority-grid">',
+            ]
+        )
+        queue = (
+            [("High", item, "View failed notes", "/review/failed-notes") for item in data["failed"]]
+            + [("High", item, "View fallback notes", "/review/fallback-notes") for item in data["fallback"]]
+            + [("Medium", item, "View weak notes", "/review/weak-notes") for item in data["weak"]]
+        )
+        for priority, item, detail_label, detail_page in queue[:50]:
+            lines.extend(self._priority_card(priority, item, detail_label, detail_page))
         if not queue:
-            lines.append("| - | No review items | - | - | - |")
+            lines.append('<p class="review-empty-state">No priority review items.</p>')
+        lines.append("</div>")
         lines.extend(["", "## Provenance", "", f"- Generated: {datetime.utcnow().isoformat()}"])
         return "\n".join(lines) + "\n"
 
@@ -149,14 +163,116 @@ class ReviewGenerator:
         lines = [f"# {title}", "", "| Resource | Type | Provider/model | Reason | Source |", "|---|---|---|---|---|"]
         for item in items:
             provider = f"{item.get('provider') or '-'} / {item.get('model') or '-'}"
+            reason = self._reason_with_provenance(item.get("reason"))
             lines.append(
                 f"| [{md_table_cell(item['title'])}]({item['page']}) | {md_table_cell(item['type'])} | {md_table_cell(provider)} | "
-                f"{md_table_cell(item.get('reason'))} | {md_table_cell(item.get('source_url'))} |"
+                f"{md_table_cell(reason)} | {md_table_cell(item.get('source_url'))} |"
             )
         if not items:
             lines.append("| No items | - | - | - | - |")
         lines.extend(["", "## Provenance", "", f"- Generated: {datetime.utcnow().isoformat()}"])
         return "\n".join(lines) + "\n"
+
+    def _priority_card(
+        self,
+        priority: str,
+        item: dict[str, Any],
+        detail_label: str,
+        detail_page: str,
+    ) -> list[str]:
+        raw_reason = str(item.get("reason") or "")
+        raw_status = str(item.get("status") or "")
+        resource_id = str(item.get("id") or "")
+        title = escape(str(item.get("title") or "Untitled resource"))
+        page = escape(str(item.get("page") or "#"), quote=True)
+        detail_href = escape(detail_page, quote=True)
+        priority_class = escape(priority.lower().replace(" ", "-"), quote=True)
+        reason = escape(self.humanize_reason(raw_reason))
+        status = escape(self.humanize_status(raw_status))
+        raw_reason_html = escape(raw_reason) if raw_reason else "none"
+        raw_status_html = escape(raw_status) if raw_status else "none"
+        resource_id_html = escape(resource_id) if resource_id else "unknown"
+        return [
+            '  <article class="review-priority-card">',
+            '    <div class="review-card-header">',
+            f'      <span class="review-priority-badge review-priority-{priority_class}">{escape(priority)}</span>',
+            f'      <span class="wiki-chip">{status}</span>',
+            "    </div>",
+            f'    <h3><a href="{page}">{title}</a></h3>',
+            f'    <p class="review-reason">{reason}</p>',
+            '    <div class="review-card-actions">',
+            f'      <a class="review-open-link" href="{page}">Open resource</a>',
+            f'      <a class="review-secondary-link" href="{detail_href}">{escape(detail_label)}</a>',
+            "    </div>",
+            f'    <p class="review-resource-id"><span>Resource id</span><code>{resource_id_html}</code></p>',
+            '    <details class="review-provenance">',
+            "      <summary>Raw provenance</summary>",
+            "      <dl>",
+            f"        <dt>Raw reason</dt><dd><code>{raw_reason_html}</code></dd>",
+            f"        <dt>Raw status</dt><dd><code>{raw_status_html}</code></dd>",
+            "      </dl>",
+            "    </details>",
+            "  </article>",
+        ]
+
+    def _reason_with_provenance(self, reason: str | None) -> str:
+        raw = str(reason or "")
+        human = self.humanize_reason(raw)
+        if not raw or human == raw:
+            return human
+        return f"{human} (raw: {raw})"
+
+    def humanize_reason(self, reason: str | None) -> str:
+        raw = str(reason or "").strip()
+        if not raw:
+            return "Needs review"
+        labels = []
+        for part in raw.replace(",", ";").split(";"):
+            token = part.strip()
+            if not token:
+                continue
+            labels.append(self._human_reason_part(token))
+        return "; ".join(labels) if labels else "Needs review"
+
+    def humanize_status(self, status: str | None) -> str:
+        raw = str(status or "").strip()
+        if not raw:
+            return "Unknown status"
+        status_map = {
+            "llm_cache_hit": "LLM cache hit",
+            "failed_retryable": "Failed, retryable",
+            "failed_permanent": "Failed permanently",
+            "needs_manual_markdown": "Needs manual Markdown",
+            "processed": "Processed",
+            "raw_saved": "Raw saved",
+            "normalized": "Normalized",
+            "duplicate_skipped": "Duplicate skipped",
+        }
+        return status_map.get(raw, raw.replace("_", " ").replace("-", " ").title())
+
+    def _human_reason_part(self, reason: str) -> str:
+        reason_map = {
+            "quality_status=weak": "Marked weak by quality checks",
+            "requires_human_review": "Requires human review",
+            "fallback-completed": "Completed by deterministic fallback",
+            "fallback completed": "Completed by deterministic fallback",
+            "contract_completed_by_deterministic_fallback": "Contract completed by deterministic fallback",
+            "note is short": "Note is short",
+            "generic phrases": "Contains generic phrases",
+            "weak Harish project connections": "Weak Harish project connections",
+            "sparse source-backed citations": "Sparse source-backed citations",
+            "failed_retryable": "Failed, retryable",
+            "Citations section missing": "Citations section missing",
+            "Source-backed summary has fewer than 3 citations": "Source-backed summary has fewer than 3 citations",
+            "missing source chunks": "Missing source chunks",
+            "chunks.jsonl missing": "Chunk index file missing",
+            "stale for ollama_cloud": "Stale for Ollama Cloud",
+            "needs manual Markdown": "Needs manual Markdown",
+            "replaceable title": "Replaceable title",
+        }
+        if reason in reason_map:
+            return reason_map[reason]
+        return reason.replace("_", " ").replace("-", " ").strip().capitalize()
 
 
 review_generator = ReviewGenerator()

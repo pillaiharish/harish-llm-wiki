@@ -167,6 +167,8 @@ features:
     details: Search across all content using VitePress
   - title: 📅 Timeline View
     details: Chronological learning trail
+  - title: 🧭 Ingest Guide
+    details: Add resources safely with dry-runs, mock processing, and token controls
 ---
 
 ## Welcome
@@ -184,13 +186,17 @@ This is a personal static learning wiki generated from:
 - [Explore concepts](/concepts/)
 - [Browse by tag](/tags/)
 - [Knowledge gaps](/gaps)
+- [Ingest and processing guide](/ingest/)
 
 ## How to Use
 
-1. **Add resources** with `python -m wiki add-batch`
-2. **Process new resources** with `python -m wiki process-new`
-3. **Generate site** with `python -m wiki build-site`
-4. **Browse locally** with `cd site && npm run docs:dev`
+1. **Add resources** with `.venv/bin/python -m wiki add-batch`
+2. **Preview processing** with `.venv/bin/python -m wiki process-new --dry-run --provider mock`
+3. **Process safely** with `.venv/bin/python -m wiki process-new --provider mock`
+4. **Generate site** with `.venv/bin/python -m wiki build-site --refresh`
+5. **Browse locally** with `cd site && npm run docs:dev`
+
+For token-safe provider setup and batch examples, see the [ingest guide](/ingest/).
 
 ## Privacy Note
 

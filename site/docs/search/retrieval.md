@@ -50,11 +50,11 @@ The four sub-boosts are:
 - BM25 index built: True
 - Vector index built: True
 - Chunk index built: True
-- BM25 chunks: 147
-- BM25 vocab size: 4988
-- Vector chunks: 147
+- BM25 chunks: 156
+- BM25 vocab size: 5083
+- Vector chunks: 156
 - Vector dimension: 1024
-- Chunk index chunks: 147
+- Chunk index chunks: 156
 
 ## Example commands
 

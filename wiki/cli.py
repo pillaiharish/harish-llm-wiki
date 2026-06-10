@@ -3010,6 +3010,7 @@ def validate(
         ("graph workspace", site_builder.repo_site_dir / "graph" / "explore.md"),
         ("graphify explorer", site_builder.repo_site_dir / "graph" / "graphify.md"),
         ("graph viewer", site_builder.repo_site_dir / "graph" / "viewer.md"),
+        ("ingest guide", site_builder.repo_site_dir / "ingest" / "index.md"),
         ("chunks index page", site_builder.repo_site_dir / "chunks" / "index.md"),
         ("chunks public chunks.json", site_builder.repo_site_dir / "public" / "chunks" / "chunks.json"),
         ("chunks public manifest.json", site_builder.repo_site_dir / "public" / "chunks" / "manifest.json"),

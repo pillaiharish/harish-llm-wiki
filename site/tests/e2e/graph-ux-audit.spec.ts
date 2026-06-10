@@ -77,11 +77,48 @@ async function waitForGraphify(page: Page) {
   await page.waitForFunction(
     () => {
       const state = (window as any).__graphifyExplorerState
-      return state && state.ready === true && state.totalNodes > 0
+      return (
+        state &&
+        state.ready === true &&
+        state.stabilized === true &&
+        state.fitComplete === true &&
+        state.visibleNodes > 0 &&
+        state.visibleEdges > 0 &&
+        state.networkWidth > 0 &&
+        state.networkHeight > 0 &&
+        state.networkScale >= 0.85
+      )
     },
     null,
     { timeout: 30_000 }
   )
+}
+
+async function expectGraphifyCanvasNotBlank(page: Page) {
+  const sample = await page.getByTestId('graphify-network').evaluate((element) => {
+    const canvas = element.querySelector('canvas') as HTMLCanvasElement | null
+    if (!canvas) return { hasCanvas: false, coloredPixels: 0, width: 0, height: 0 }
+    const context = canvas.getContext('2d')
+    if (!context) return { hasCanvas: true, coloredPixels: 0, width: canvas.width, height: canvas.height }
+    const step = Math.max(4, Math.floor(Math.min(canvas.width, canvas.height) / 80))
+    const data = context.getImageData(0, 0, canvas.width, canvas.height).data
+    let coloredPixels = 0
+    for (let y = 0; y < canvas.height; y += step) {
+      for (let x = 0; x < canvas.width; x += step) {
+        const index = (y * canvas.width + x) * 4
+        const alpha = data[index + 3]
+        const red = data[index]
+        const green = data[index + 1]
+        const blue = data[index + 2]
+        if (alpha > 16 && (red > 20 || green > 20 || blue > 20)) coloredPixels += 1
+      }
+    }
+    return { hasCanvas: true, coloredPixels, width: canvas.width, height: canvas.height }
+  })
+  expect(sample.hasCanvas, 'Graphify network canvas was not mounted').toBe(true)
+  expect(sample.width, 'Graphify canvas width should be nonzero').toBeGreaterThan(0)
+  expect(sample.height, 'Graphify canvas height should be nonzero').toBeGreaterThan(0)
+  expect(sample.coloredPixels, 'Graphify canvas appears visually blank').toBeGreaterThan(20)
 }
 
 async function setDesktop(page: Page) {
@@ -218,6 +255,7 @@ test('graphify supports deterministic search/filter controls without overflow', 
   await expect(page.getByRole('heading', { name: 'Graphify Explorer', level: 1 })).toBeVisible()
   await expect(page.getByTestId('graphify-explorer')).toBeVisible()
   await expect(page.getByTestId('graphify-network')).toBeVisible()
+  await expectGraphifyCanvasNotBlank(page)
 
   await expectLocatorMinWidth(page.getByTestId('graphify-explorer'), 1000, 'desktop graphify workspace')
   const networkBox = await expectLocatorMinWidth(
@@ -235,6 +273,12 @@ test('graphify supports deterministic search/filter controls without overflow', 
   let state = await page.evaluate(() => (window as any).__graphifyExplorerState)
   expect(state.selectedNodeId).toBe('concept:attention')
   expect(state.searchMatchIds).toContain('concept:attention')
+  expect(state.visibleNodes).toBeGreaterThan(0)
+  expect(state.visibleEdges).toBeGreaterThan(0)
+  expect(state.networkWidth).toBeGreaterThan(500)
+  expect(state.networkHeight).toBeGreaterThan(300)
+  expect(state.fitComplete).toBe(true)
+  expect(state.networkScale).toBeGreaterThanOrEqual(0.85)
   await captureScreenshot(page, 'graphify-search-inspector-desktop')
 
   const beforeFilter = await page.evaluate(() => (window as any).__graphifyExplorerState.visibleNodes)
@@ -252,6 +296,7 @@ test('graphify supports deterministic search/filter controls without overflow', 
   await page.goto('/graph/graphify', { waitUntil: 'domcontentloaded' })
   await waitForGraphify(page)
   await expect(page.getByTestId('graphify-network')).toBeVisible()
+  await expectGraphifyCanvasNotBlank(page)
   await expectNoHorizontalOverflow(page)
   await captureScreenshot(page, 'graphify-default-mobile')
 

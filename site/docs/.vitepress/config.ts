@@ -43,6 +43,7 @@ export default defineConfig({
       {
         text: 'Data',
         items: [
+          { text: 'Ingest', link: '/ingest/' },
           { text: 'Timeline', link: '/timeline' },
           { text: 'Chunks', link: '/chunks/' },
         ],
@@ -132,6 +133,14 @@ export default defineConfig({
           text: 'Chunks',
           items: [
             { text: 'Overview', link: '/chunks/' },
+          ]
+        }
+      ],
+      '/ingest/': [
+        {
+          text: 'Ingest',
+          items: [
+            { text: 'Workflow', link: '/ingest/' },
           ]
         }
       ],

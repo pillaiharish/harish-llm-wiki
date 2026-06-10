@@ -13,8 +13,8 @@ grounded LLM answers).
 ## Stats
 
 - Schema version: `chunk_index_v1`
-- Chunks: 147
-- Resources indexed: 23
+- Chunks: 156
+- Resources indexed: 24
 
 ### By source type
 
@@ -24,7 +24,7 @@ grounded LLM answers).
 | local_video | 1 |
 | medium_markdown | 3 |
 | pdf | 13 |
-| webpage | 60 |
+| webpage | 69 |
 | youtube | 69 |
 
 ## Top resources by chunk count
@@ -35,6 +35,7 @@ grounded LLM answers).
 | [Inside vLLM: Anatomy of a High-Throughput LLM Inference System - Aleksa Gordić](/resources/webpage_df11644e8c0603551fc44887813019ce9cd423157c4e69666ccb5c48b0b11dd1) | webpage | 26 |
 | [Attention Is All You Need](/resources/pdf_bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697) | pdf | 13 |
 | [Strategies for LLM Evals (GuideLLM, lm-eval-harness, OpenAI Evals Workshop) — Taylor Jordan Smith](/resources/youtube_89NuzmKokIk) | youtube | 11 |
+| [sentence-transformers (Sentence Transformers)](/resources/webpage_5e97e431d38983895e517dff6a38284198537f4087da97c846126493daeb73ea) | webpage | 9 |
 | [Lessons from the Trenches: Building LLM Evals That Work IRL: Aparna Dhinkaran](/resources/youtube_nbZzSC5A6hs) | youtube | 7 |
 | [vLLM: Easily Deploying & Serving LLMs](/resources/youtube_q5IF2PHA5SA) | youtube | 6 |
 | [Better RAG: Hybrid Search in Chat with Documents \| BM25 and Ensemble](/resources/youtube_r2m9DbEmeqI) | youtube | 6 |
@@ -50,7 +51,6 @@ grounded LLM answers).
 | [What are LLM Evals ?](/resources/youtube_FdqrP7jvZEo) | youtube | 2 |
 | [Inside vLLM: How vLLM works](/resources/youtube_fR1HVMDnaqA) | youtube | 2 |
 | [Top 3 RAG Retrieval Strategies: Sparse, Dense, & Hybrid Explained](/resources/youtube_r0Dciuq0knU) | youtube | 2 |
-| [MIT18_06SC_intro_300k](/resources/media_230471310fb55e664dd2591ae50266a7bcabf064ba85c55e226f292c652f0cda) | local_video | 1 |
 
 ## Provenance
 

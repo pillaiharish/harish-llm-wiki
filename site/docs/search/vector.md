@@ -19,11 +19,11 @@ belong to later prompts.
 ## Stats
 
 - Schema version: `vector_index_v1`
-- Chunks indexed: 147
-- Resources: 23
+- Chunks indexed: 156
+- Resources: 24
 - Dimension: 1024
-- Vocab size: 4988
-- Total NNZ: 16272
+- Vocab size: 5083
+- Total NNZ: 16613
 
 ### By source type
 
@@ -33,7 +33,7 @@ belong to later prompts.
 | local_video | 1 |
 | medium_markdown | 3 |
 | pdf | 13 |
-| webpage | 60 |
+| webpage | 69 |
 | youtube | 69 |
 
 ## Example queries

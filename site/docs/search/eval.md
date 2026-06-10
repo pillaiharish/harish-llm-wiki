@@ -21,7 +21,7 @@ combination (e.g. the BM25 or vector index was unavailable).
 
 | Mode | k | Cases | recall@k | precision@k | hit@k | MRR | expected-term coverage |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| bm25 | 1 | 3 | 0.000 | 0.000 | 0.000 | 0.000 | 0.667 |
+| bm25 | 1 | 3 | 0.000 | 0.000 | 0.000 | 0.000 | 0.500 |
 | bm25 | 2 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
 | bm25 | 3 | 3 | 0.000 | 0.000 | 0.000 | 0.000 | 0.667 |
 | graph-lite | 1 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
@@ -40,7 +40,7 @@ transpose of the per-mode+per-k aggregate above.
 
 | k | Cases | recall@k | precision@k | hit@k | MRR | expected-term coverage |
 |---:|---:|---:|---:|---:|---:|---:|
-| 1 | 3 | 0.000 | 0.000 | 0.000 | 0.000 | 0.667 |
+| 1 | 3 | 0.000 | 0.000 | 0.000 | 0.000 | 0.500 |
 | 2 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
 | 3 | 3 | 0.000 | 0.000 | 0.000 | 0.000 | 0.667 |
 
@@ -73,7 +73,7 @@ Same aggregate view, grouped by `k` value.
 
 | Mode | Cases | recall@k | precision@k | hit@k | MRR | expected-term coverage |
 |---|---:|---:|---:|---:|---:|---:|
-| bm25 | 3 | 0.000 | 0.000 | 0.000 | 0.000 | 0.667 |
+| bm25 | 3 | 0.000 | 0.000 | 0.000 | 0.000 | 0.500 |
 | graph-lite | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
 | hybrid | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
 | vector | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
@@ -105,7 +105,7 @@ case produced no successful metric at all.
 | vector-semantic-attention | self-attention mechanism | vector | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |  |
 | hybrid-mixed-query | scaled dot-product attention | hybrid | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |  |
 | graph-lite-topic-query | transformer architecture | graph-lite | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |  |
-| term-coverage-words | transformer scaled | bm25 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |  |
+| term-coverage-words | transformer scaled | bm25 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 0.500 |  |
 | no-hit-query | this string should not match anything | bm25 | 1 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |  |
 
 ## Failures and no-hit cases

@@ -6,18 +6,20 @@ const SCREENSHOT_DIR = path.resolve(
   process.cwd(),
   '..',
   '.agent-sessions',
-  'prompt45_shell_nav_consistency',
+  process.env.SHELL_UX_AUDIT_ID || 'prompt45_shell_nav_consistency',
   'screenshots'
 )
 
 const VIEWPORTS = [
   { name: 'desktop-1440', width: 1440, height: 900 },
   { name: 'desktop-1280', width: 1280, height: 900 },
+  { name: 'compact-1100', width: 1100, height: 820 },
   { name: 'compact-1024', width: 1024, height: 768 },
 ]
 
 const ROUTES = [
   { name: 'resources', path: '/resources/' },
+  { name: 'ingest', path: '/ingest/' },
   { name: 'chunks', path: '/chunks/' },
   { name: 'review', path: '/review/' },
   { name: 'graph-explore', path: '/graph/explore' },

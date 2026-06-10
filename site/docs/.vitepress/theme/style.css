@@ -18,6 +18,335 @@
   flex: 0 0 auto;
 }
 
+.vp-doc a,
+.vp-doc code,
+.vp-doc td,
+.vp-doc th {
+  overflow-wrap: anywhere;
+}
+
+.vp-doc table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-spacing: 0;
+}
+
+.wiki-card,
+.wiki-stat-card,
+.wiki-toolbar {
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  background: var(--vp-c-bg-soft);
+}
+
+.wiki-card,
+.wiki-stat-card {
+  padding: 1rem;
+}
+
+.wiki-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.wiki-chip {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0.08rem 0.42rem;
+  border-radius: 999px;
+  background: var(--vp-c-default-soft);
+  color: var(--vp-c-text-2);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.wiki-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: center;
+  padding: 0.75rem;
+}
+
+.wiki-button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.wiki-muted {
+  color: var(--vp-c-text-2);
+}
+
+.wiki-long-token {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.wiki-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.review-priority-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0 1.5rem;
+}
+
+.review-priority-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  background: var(--vp-c-bg-soft);
+}
+
+.review-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.review-priority-card h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 1.3;
+}
+
+.review-priority-card h3 a,
+.review-reason,
+.review-resource-id,
+.review-resource-id code,
+.review-provenance,
+.review-provenance code {
+  overflow-wrap: anywhere;
+}
+
+.review-priority-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.5rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.review-priority-high {
+  background: color-mix(in srgb, #ef4444 16%, var(--vp-c-bg-soft));
+  color: #b91c1c;
+}
+
+.review-priority-medium {
+  background: color-mix(in srgb, #f59e0b 18%, var(--vp-c-bg-soft));
+  color: #92400e;
+}
+
+.review-reason {
+  margin: 0;
+  color: var(--vp-c-text-1);
+  line-height: 1.55;
+}
+
+.review-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  align-items: center;
+  margin-top: auto;
+}
+
+.review-resource-id {
+  display: grid;
+  grid-template-columns: minmax(5.5rem, max-content) minmax(0, 1fr);
+  gap: 0.5rem;
+  margin: 0;
+  color: var(--vp-c-text-2);
+  font-size: 0.82rem;
+}
+
+.review-resource-id span {
+  font-weight: 700;
+}
+
+.review-provenance {
+  padding-top: 0.25rem;
+  border-top: 1px solid var(--vp-c-divider);
+  color: var(--vp-c-text-2);
+  font-size: 0.84rem;
+}
+
+.review-provenance summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--vp-c-text-1);
+}
+
+.review-provenance dl {
+  display: grid;
+  grid-template-columns: minmax(5.5rem, max-content) minmax(0, 1fr);
+  gap: 0.45rem 0.65rem;
+  margin: 0.65rem 0 0;
+}
+
+.review-provenance dt {
+  font-weight: 700;
+}
+
+.review-provenance dd {
+  min-width: 0;
+  margin: 0;
+}
+
+.review-open-link,
+.review-secondary-link,
+.timeline-classification-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  min-height: 2.25rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: 8px;
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.review-open-link {
+  border: 1px solid var(--vp-c-brand-1);
+}
+
+.review-secondary-link,
+.timeline-classification-cta {
+  border: 1px solid var(--vp-c-divider);
+  color: var(--vp-c-text-1);
+  background: var(--vp-c-bg);
+}
+
+.review-empty-state,
+.timeline-classification-note {
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  background: var(--vp-c-bg-soft);
+  color: var(--vp-c-text-2);
+}
+
+.timeline-classification-note {
+  margin: 0.4rem 0 1rem;
+}
+
+.timeline-classification-note a {
+  font-weight: 700;
+}
+
+.timeline-classification-cta {
+  display: flex;
+  margin-top: 0.75rem;
+}
+
+.ingest-mode-grid,
+.ingest-command-flow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0 1.5rem;
+}
+
+.ingest-mode-card,
+.ingest-command-card,
+.ingest-flow-grid .wiki-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.ingest-mode-card h2,
+.ingest-command-card h2,
+.ingest-flow-grid h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.ingest-mode-card p,
+.ingest-command-card p,
+.ingest-flow-grid p {
+  margin: 0;
+}
+
+.ingest-command,
+.ingest-flow-grid pre {
+  margin: auto 0 0;
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.ingest-command code {
+  white-space: pre;
+}
+
+.ingest-safety-card {
+  margin: 1rem 0 1.5rem;
+}
+
+.ingest-safety-card table {
+  margin: 0.75rem 0 0;
+}
+
+.ingest-after-grid {
+  margin: 1rem 0 1.5rem;
+}
+
+.ingest-link-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 4rem;
+  color: var(--vp-c-text-1);
+  text-decoration: none;
+  font-weight: 700;
+}
+
+@media (max-width: 640px) {
+  .review-priority-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .review-resource-id,
+  .review-provenance dl {
+    grid-template-columns: 1fr;
+  }
+
+  .review-open-link,
+  .review-secondary-link {
+    width: 100%;
+  }
+
+  .ingest-mode-grid,
+  .ingest-command-flow {
+    grid-template-columns: 1fr;
+  }
+}
+
 .graph-landing-page .graph-cta-grid,
 .graph-relationships-page .graph-stat-grid {
   display: grid;
@@ -217,5 +546,25 @@
   .graph-workspace-handoff-link,
   .graph-inline-link {
     width: 100%;
+  }
+}
+
+@media (min-width: 960px) and (max-width: 1180px) {
+  .VPNavBar .content-body {
+    gap: 0.25rem;
+  }
+
+  .VPNavBarSearch {
+    flex: 0 1 150px;
+  }
+
+  .VPNavBarMenu {
+    gap: 0.1rem;
+  }
+
+  .VPNavBarMenu .VPNavBarMenuLink,
+  .VPNavBarMenu .VPNavBarMenuGroup {
+    padding-left: 0.35rem;
+    padding-right: 0.35rem;
   }
 }
