@@ -6,6 +6,10 @@ title: Ingest & Processing
 
 This page is a static local runbook. It helps you choose safe CLI commands, but it does not upload files, store browser-side secrets, or run provider calls from the webapp.
 
+<ClientOnly>
+  <IngestCommandBuilder />
+</ClientOnly>
+
 ## Choose Your Processing Mode
 
 <div class="ingest-mode-grid">
@@ -108,9 +112,9 @@ Run these from the nested repo folder, not from the parent workspace.
 
 Example files:
 
-- [`.env.example`](https://github.com/pillaiharish/harish-llm-wiki/blob/main/.env.example)
-- [`inputs/batch_urls.example.txt`](https://github.com/pillaiharish/harish-llm-wiki/blob/main/inputs/batch_urls.example.txt)
-- [`inputs/resources.example.yaml`](https://github.com/pillaiharish/harish-llm-wiki/blob/main/inputs/resources.example.yaml)
+- `.env.example`
+- `inputs/batch_urls.example.txt`
+- `inputs/resources.example.yaml` (reference format only; no YAML import CLI exists yet)
 
 ## After Ingest
 

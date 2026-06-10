@@ -1,0 +1,14 @@
+site:
+  title: "Harish LLM Wiki"
+  owner_name: "Harish"
+  description: "Personal static learning wiki"
+  footer_message: "Generated with Harish LLM Wiki"
+  copyright: "Copyright © 2024-2026"
+  hero:
+    name: "Harish LLM Wiki"
+    text: "Personal Learning Wiki"
+    tagline: "A static wiki generated from YouTube, blogs, and LLM-generated notes"
+  github:
+    owner: "pillaiharish"
+    repo: "harish-llm-wiki"
+    branch: "main"

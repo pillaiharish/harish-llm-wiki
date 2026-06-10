@@ -80,6 +80,10 @@ async function waitForRouteReadiness(page: Page, routeName: string) {
     await expect(page.locator('#explorer-q')).toBeVisible({ timeout: 20_000 })
     return
   }
+  if (routeName === 'ingest') {
+    await expect(page.getByTestId('ingest-command-builder')).toBeVisible({ timeout: 20_000 })
+    return
+  }
   if (routeName === 'graph-explore' || routeName === 'graph-viewer') {
     await page.waitForFunction(
       () => {

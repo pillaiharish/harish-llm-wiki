@@ -1,9 +1,10 @@
 import { defineConfig } from 'vitepress'
+import { siteBranding } from './site-branding.generated'
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
-  title: "Harish LLM Wiki",
-  description: "Personal static learning wiki",
+  title: siteBranding.title,
+  description: siteBranding.description,
   
   // Clean URLs (no .html)
   cleanUrls: true,
@@ -190,12 +191,12 @@ export default defineConfig({
     },
     
     footer: {
-      message: 'Generated with Harish LLM Wiki',
-      copyright: 'Copyright © 2024-2026'
+      message: siteBranding.footerMessage,
+      copyright: siteBranding.copyright
     },
     
     editLink: {
-      pattern: 'https://github.com/pillaiharish/harish-llm-wiki/edit/main/site/docs/:path',
+      pattern: siteBranding.githubEditPattern,
       text: 'Edit this page on GitHub'
     }
   },
@@ -212,8 +213,8 @@ export default defineConfig({
   head: [
     ['meta', { name: 'theme-color', content: '#3c3c3c' }],
     ['meta', { name: 'og:type', content: 'website' }],
-    ['meta', { name: 'og:title', content: 'Harish LLM Wiki' }],
-    ['meta', { name: 'og:description', content: 'Personal static learning wiki' }],
+    ['meta', { name: 'og:title', content: siteBranding.ogTitle }],
+    ['meta', { name: 'og:description', content: siteBranding.ogDescription }],
   ],
 
   // Vite build configuration
