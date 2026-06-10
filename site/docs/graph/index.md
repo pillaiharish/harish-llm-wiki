@@ -14,6 +14,10 @@ a backend service.
     <strong>Open Interactive Graph</strong>
     <span>Launch the full graph workspace with filters, path-finding, and node inspection.</span>
   </a>
+  <a class="graph-cta-card" href="/graph/graphify">
+    <strong>Open Graphify Explorer</strong>
+    <span>Explore the same graph data in a dark, search-first vis-network view.</span>
+  </a>
   <a class="graph-cta-card" href="/graph/viewer">
     <strong>View Technical Reference</strong>
     <span>Open the compatibility viewer with provenance notes, JSON links, and runtime details.</span>
@@ -57,6 +61,7 @@ in the wiki build rather than by a runtime inference layer.
 | [/graph/edges.json](/graph/edges.json) | All graph edges |
 | [/graph/knowledge_graph.json](/graph/knowledge_graph.json) | Combined bundle with stats |
 | [Open the graph workspace](/graph/explore) | App-style graph workspace for exploration and demos |
+| [Open the Graphify explorer](/graph/graphify) | Dark enhanced graph view using vis-network |
 | [Open the compatibility viewer](/graph/viewer) | Technical/reference page with the same graph runtime |
 | [Open the relationship report](/graph/resource-relationships) | Deterministic resource-to-resource relationship summary |
 
@@ -94,4 +99,4 @@ in the wiki build rather than by a runtime inference layer.
 
 ## Provenance
 
-- Generated: 2026-06-09T11:38:56.288122+00:00
+- Generated: 2026-06-10T10:27:42.006357+00:00

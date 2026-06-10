@@ -380,6 +380,7 @@ Do not publish publicly unless content is appropriate for public sharing.
             # Prompt 25: also write the static graph viewer page.
             self._build_graph_viewer_page(graph)
             self._build_graph_explore_page(graph)
+            self._build_graph_graphify_page(graph)
 
     def _build_graph_index_page(self, graph: dict) -> None:
         """Build a small Markdown landing page for the graph files.
@@ -408,6 +409,10 @@ Do not publish publicly unless content is appropriate for public sharing.
             '  <a class="graph-cta-card graph-cta-card-primary" href="/graph/explore">',
             '    <strong>Open Interactive Graph</strong>',
             "    <span>Launch the full graph workspace with filters, path-finding, and node inspection.</span>",
+            "  </a>",
+            '  <a class="graph-cta-card" href="/graph/graphify">',
+            '    <strong>Open Graphify Explorer</strong>',
+            "    <span>Explore the same graph data in a dark, search-first vis-network view.</span>",
             "  </a>",
             '  <a class="graph-cta-card" href="/graph/viewer">',
             '    <strong>View Technical Reference</strong>',
@@ -452,6 +457,7 @@ Do not publish publicly unless content is appropriate for public sharing.
             "| [/graph/edges.json](/graph/edges.json) | All graph edges |",
             "| [/graph/knowledge_graph.json](/graph/knowledge_graph.json) | Combined bundle with stats |",
             "| [Open the graph workspace](/graph/explore) | App-style graph workspace for exploration and demos |",
+            "| [Open the Graphify explorer](/graph/graphify) | Dark enhanced graph view using vis-network |",
             "| [Open the compatibility viewer](/graph/viewer) | Technical/reference page with the same graph runtime |",
             "| [Open the relationship report](/graph/resource-relationships) | Deterministic resource-to-resource relationship summary |",
             "",
@@ -699,6 +705,12 @@ Do not publish publicly unless content is appropriate for public sharing.
         """Write the app-style graph workspace page."""
         self._build_graph_template_page(
             graph, template_name="explore.md", output_name="explore.md"
+        )
+
+    def _build_graph_graphify_page(self, graph: dict) -> None:
+        """Write the Graphify-style vis-network explorer page."""
+        self._build_graph_template_page(
+            graph, template_name="graphify.md", output_name="graphify.md"
         )
 
     def _build_graph_template_page(
