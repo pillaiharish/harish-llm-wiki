@@ -26,7 +26,7 @@ powers `wiki build-context` (Prompt 33) and `wiki build-rag-prompt`
 - Schema version: `context_pack_v1`
 - Total chunks: 5
 - Total sources: 2
-- Used chars: 15391
+- Used chars: 15057
 - Limit: 5
 - Max chars (per chunk): 0
 
@@ -36,7 +36,7 @@ powers `wiki build-context` (Prompt 33) and `wiki build-rag-prompt`
 
 - Resource: `pdf:bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697` — Attention Is All You Need
 - Source type: `pdf`
-- Score: 0.863751
+- Score: 0.896239
 - Chunk id: `pdf:bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697-p0001`
 
 ```
@@ -96,7 +96,7 @@ sequence (y1, ..., ym) of symbols one element at a time. At each step the model 
 
 - Resource: `youtube:yHAcgyntYDQ` — How vLLM Works + Journey of Prompts to vLLM + Paged Attention
 - Source type: `youtube`
-- Score: 0.832995
+- Score: 0.845035
 - Chunk id: `youtube:yHAcgyntYDQ-c0000`
 
 ```
@@ -107,7 +107,7 @@ This video explains the journey of prompts in VLLLM. We start with three example
 
 - Resource: `pdf:bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697` — Attention Is All You Need
 - Source type: `pdf`
-- Score: 0.763514
+- Score: 0.774431
 - Chunk id: `pdf:bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697-p0009`
 
 ```
@@ -165,7 +165,7 @@ reading. arXiv preprint arXiv:1601.06733, 2016.
 
 - Resource: `pdf:bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697` — Attention Is All You Need
 - Source type: `pdf`
-- Score: 0.744569
+- Score: 0.770867
 - Chunk id: `pdf:bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697-p0002`
 
 ```
@@ -198,57 +198,66 @@ where the query, keys, values, and output are all vectors. The output is compute
 
 - Resource: `pdf:bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697` — Attention Is All You Need
 - Source type: `pdf`
-- Score: 0.735736
-- Chunk id: `pdf:bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697-p0007`
+- Score: 0.745512
+- Chunk id: `pdf:bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697-p0000`
 
 ```
-Table 2: The Transformer achieves better BLEU scores than previous state-of-the-art models on the
-English-to-German and English-to-French newstest2014 tests at a fraction of the training cost.
-Model
-BLEU Training Cost (FLOPs)
-EN-DE EN-FR EN-DE EN-FR
-ByteNet [18] 23.75
-Deep-Att + PosUnk [39] 39.2 1.0 · 1020
-GNMT + RL [38] 24.6 39.92 2.3 · 1019 1.4 · 1020
-ConvS2S [9] 25.16 40.46 9.6 · 1018 1.5 · 1020
-MoE [32] 26.03 40.56 2.0 · 1019 1.2 · 1020
-Deep-Att + PosUnk Ensemble [39] 40.4 8.0 · 1020
-GNMT + RL Ensemble [38] 26.30 41.16 1.8 · 1020 1.1 · 1021
-ConvS2S Ensemble [9] 26.36 41.29 7.7 · 1019 1.2 · 1021
-Transformer (base model) 27.3 38.1 3.3 · 1018
-Transformer (big) 28.4 41.8 2.3 · 1019
-Residual Dropout We apply dropout [33] to the output of each sub-layer, before it is added to the
-sub-layer input and normalized. In addition, we apply dropout to the sums of the embeddings and the
-positional encodings in both the encoder and decoder stacks. For the base model, we use a rate of
-Pdrop = 0.1.
-Label Smoothing During training, we employed label smoothing of value ϵls = 0.1 [36]. This
-hurts perplexity, as the model learns to be more unsure, but improves accuracy and BLEU score.
-6 Results
-6.1 Machine Translation
-On the WMT 2014 English-to-German translation task, the big transformer model (Transformer (big)
-in Table 2) outperforms the best previously reported models (including ensembles) by more than 2.0
-BLEU, establishing a new state-of-the-art BLEU score of 28.4. The configuration of this model is
-listed in the bottom line of Table 3. Training took 3.5 days on 8 P100 GPUs. Even our base model
-surpasses all previously published models and ensembles, at a fraction of the training cost of any of
-the competitive models.
-On the WMT 2014 English-to-French translation task, our big model achieves a BLEU score of 41.0,
-outperforming all of the previously published single models, at less than 1/4 the training cost of the
-previous state-of-the-art model. The Transformer (big) model trained for English-to-French used
-dropout rate Pdrop = 0.1, instead of 0.3.
-For the base models, we used a single model obtained by averaging the last 5 checkpoints, which
-were written at 10-minute intervals. For the big models, we averaged the last 20 checkpoints. We
-used beam search with a beam size of 4 and length penalty α = 0.6 [38]. These hyperparameters
-were chosen after experimentation on the development set. We set the maximum output length during
-inference to input length + 50, but terminate early when possible [38].
-Table 2 summarizes our results and compares our translation quality and training costs to other model
-architectures from the literature. We estimate the number of floating point operations used to train a
-model by multiplying the training time, the number of GPUs used, and an estimate of the sustained
-single-precision floating-point capacity of each GPU 5.
-6.2 Model Variations
-To evaluate the importance of different components of the Transformer, we varied our base model
-in different ways, measuring the change in performance on English-to-German translation on the
-5We used values of 2.8, 3.7, 6.0 and 9.5 TFLOPS for K80, K40, M40 and P100, respectively.
-8
+Provided proper attribution is provided, Google hereby grants permission to
+reproduce the tables and figures in this paper solely for use in journalistic or
+scholarly works.
+Attention Is All You Need
+Ashish Vaswani∗
+Google Brain
+avaswani@google.com
+Noam Shazeer∗
+Google Brain
+noam@google.com
+Niki Parmar∗
+Google Research
+nikip@google.com
+Jakob Uszkoreit∗
+Google Research
+usz@google.com
+Llion Jones∗
+Google Research
+llion@google.com
+Aidan N. Gomez∗ †
+University of Toronto
+aidan@cs.toronto.edu
+Łukasz Kaiser∗
+Google Brain
+lukaszkaiser@google.com
+Illia Polosukhin∗ ‡
+illia.polosukhin@gmail.com
+Abstract
+The dominant sequence transduction models are based on complex recurrent or
+convolutional neural networks that include an encoder and a decoder. The best
+performing models also connect the encoder and decoder through an attention
+mechanism. We propose a new simple network architecture, the Transformer,
+based solely on attention mechanisms, dispensing with recurrence and convolutions
+entirely. Experiments on two machine translation tasks show these models to
+be superior in quality while being more parallelizable and requiring significantly
+less time to train. Our model achieves 28.4 BLEU on the WMT 2014 English-
+to-German translation task, improving over the existing best results, including
+ensembles, by over 2 BLEU. On the WMT 2014 English-to-French translation task,
+our model establishes a new single-model state-of-the-art BLEU score of 41.8 after
+training for 3.5 days on eight GPUs, a small fraction of the training costs of the
+best models from the literature. We show that the Transformer generalizes well to
+other tasks by applying it successfully to English constituency parsing both with
+large and limited training data.
+∗Equal contribution. Listing order is random. Jakob proposed replacing RNNs with self-attention and started
+the effort to evaluate this idea. Ashish, with Illia, designed and implemented the first Transformer models and
+has been crucially involved in every aspect of this work. Noam proposed scaled dot-product attention, multi-head
+attention and the parameter-free position representation and became the other person involved in nearly every
+detail. Niki designed, implemented, tuned and evaluated countless model variants in our original codebase and
+tensor2tensor. Llion also experimented with novel model variants, was responsible for our initial codebase, and
+efficient inference and visualizations. Lukasz and Aidan spent countless long days designing various parts of and
+implementing tensor2tensor, replacing our earlier codebase, greatly improving results and massively accelerating
+our research.
+†Work performed while at Google Brain.
+‡Work performed while at Google Research.
+31st Conference on Neural Information Processing Systems (NIPS 2017), Long Beach, CA, USA.
+arXiv:1706.03762v7  [cs.CL]  2 Aug 2023
 ```
 
 ## Sources
@@ -257,7 +266,7 @@ in different ways, measuring the change in performance on English-to-German tran
     - chunk: `pdf:bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697-p0001`
     - chunk: `pdf:bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697-p0009`
     - chunk: `pdf:bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697-p0002`
-    - chunk: `pdf:bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697-p0007`
+    - chunk: `pdf:bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697-p0000`
 - [cite:2] `youtube:yHAcgyntYDQ` — How vLLM Works + Journey of Prompts to vLLM + Paged Attention (youtube)
     - chunk: `youtube:yHAcgyntYDQ-c0000`
 

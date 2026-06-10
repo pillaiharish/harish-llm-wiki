@@ -15,6 +15,7 @@ Routes checked
 - ``/graph/explore`` -> ``graph/explore.md``
 - ``/graph/graphify`` -> ``graph/graphify.md``
 - ``/graph/resource-relationships`` -> ``graph/resource-relationships.md``
+- ``/ingest/`` -> ``ingest/index.md``
 - ``/chunks/`` -> ``chunks/index.md``
 - ``/public/chunks/chunks.json`` -> ``public/chunks/chunks.json``
 - ``/public/chunks/manifest.json`` -> ``public/chunks/manifest.json``
@@ -66,6 +67,7 @@ def _expected_routes(site_dir: Path) -> List[Tuple[str, Path]]:
         ("/graph/graphify", site_dir / "graph" / "graphify.md"),
         ("/graph/viewer", site_dir / "graph" / "viewer.md"),
         ("/graph/resource-relationships", site_dir / "graph" / "resource-relationships.md"),
+        ("/ingest/", site_dir / "ingest" / "index.md"),
         ("/chunks/", site_dir / "chunks" / "index.md"),
         ("/public/chunks/chunks.json", site_dir / "public" / "chunks" / "chunks.json"),
         ("/public/chunks/manifest.json", site_dir / "public" / "chunks" / "manifest.json"),

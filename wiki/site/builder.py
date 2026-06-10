@@ -15,6 +15,7 @@ from wiki.resource_utils import (
 )
 from wiki.schemas import ResourceRecord, ResourceStatus
 from wiki.storage import Storage
+from wiki.site.branding import load_branding_config, write_vitepress_branding
 from wiki.generate.citations import (
     load_chunk_map,
     linkify_citations,
@@ -32,6 +33,7 @@ class SiteBuilder:
         """Initialize the site builder."""
         self.repo_site_dir = Path(__file__).parent.parent.parent / "site" / "docs"
         self.data_site_dir = config.get_data_path("site_generated", "docs")
+        self.branding = load_branding_config()
     
     def build(self, records: List[ResourceRecord]) -> Path:
         """Build the complete site.
@@ -43,6 +45,7 @@ class SiteBuilder:
         # Ensure site directories exist
         self.repo_site_dir.mkdir(parents=True, exist_ok=True)
         self.data_site_dir.mkdir(parents=True, exist_ok=True)
+        write_vitepress_branding(config=self.branding)
         
         # Build home page
         self._build_home(records)
@@ -142,14 +145,16 @@ class SiteBuilder:
         # Get stats
         total_resources = len(records)
         processed_resources = len([r for r in records if r.status == ResourceStatus.PROCESSED])
+        site = self.branding.site
+        hero = site.hero
         
         content = f"""---
 layout: home
 
 hero:
-  name: "Harish LLM Wiki"
-  text: "Personal Learning Wiki"
-  tagline: A static wiki generated from YouTube, blogs, and LLM-generated notes
+  name: "{self._yaml_escape(hero.name)}"
+  text: "{self._yaml_escape(hero.text)}"
+  tagline: "{self._yaml_escape(hero.tagline)}"
   actions:
     - theme: brand
       text: Browse Resources
@@ -167,11 +172,15 @@ features:
     details: Search across all content using VitePress
   - title: 📅 Timeline View
     details: Chronological learning trail
+  - title: 🧭 Ingest Guide
+    details: Add resources safely with dry-runs, mock processing, and token controls
 ---
 
 ## Welcome
 
-This is a personal static learning wiki generated from:
+{site.description}.
+
+This static learning wiki is generated from:
 
 - **YouTube transcripts** - Educational videos with timestamp citations
 - **Blog posts** - Technical articles with source references
@@ -184,13 +193,17 @@ This is a personal static learning wiki generated from:
 - [Explore concepts](/concepts/)
 - [Browse by tag](/tags/)
 - [Knowledge gaps](/gaps)
+- [Ingest and processing guide](/ingest/)
 
 ## How to Use
 
-1. **Add resources** with `python -m wiki add-batch`
-2. **Process new resources** with `python -m wiki process-new`
-3. **Generate site** with `python -m wiki build-site`
-4. **Browse locally** with `cd site && npm run docs:dev`
+1. **Add resources** with `.venv/bin/python -m wiki add-batch`
+2. **Preview processing** with `.venv/bin/python -m wiki process-new --dry-run --provider mock`
+3. **Process safely** with `.venv/bin/python -m wiki process-new --provider mock`
+4. **Generate site** with `.venv/bin/python -m wiki build-site --refresh`
+5. **Browse locally** with `cd site && npm run docs:dev`
+
+For token-safe provider setup and batch examples, see the [ingest guide](/ingest/).
 
 ## Privacy Note
 

@@ -67,6 +67,11 @@ const searchMatchIds = ref<string[]>([])
 const typeFilters = ref<string[]>([])
 const communityFilters = ref<string[]>([])
 const isFullscreen = ref(false)
+const graphStabilized = ref(false)
+const fitComplete = ref(false)
+const renderPass = ref(0)
+const inspectorVersion = ref(0)
+const selectedNodeSnapshot = ref<NormalizedNode | null>(null)
 
 const rawNodes = ref<RawNode[]>([])
 const rawEdges = ref<RawEdge[]>([])
@@ -128,8 +133,9 @@ const selectedNode = computed<NormalizedNode | null>(() => {
 })
 
 const selectedNeighbors = computed<NeighborItem[]>(() => {
-  if (!selectedNode.value || !network) return []
-  const ids = network.getConnectedNodes(selectedNode.value.id) || []
+  const node = selectedNodeSnapshot.value || selectedNode.value
+  if (!node || !network) return []
+  const ids = network.getConnectedNodes(node.id) || []
   return ids
     .map((id: string) => nodeById.value[id])
     .filter((node: NormalizedNode | undefined): node is NormalizedNode => !!node)
@@ -225,8 +231,12 @@ function ctaLabelForNode(node: NormalizedNode | null): string {
   return 'Open page'
 }
 
-const selectedRoute = computed<string | null>(() => routeForNode(selectedNode.value))
-const selectedCtaLabel = computed<string>(() => ctaLabelForNode(selectedNode.value))
+const selectedRoute = computed<string | null>(() =>
+  routeForNode(selectedNodeSnapshot.value || selectedNode.value)
+)
+const selectedCtaLabel = computed<string>(() =>
+  ctaLabelForNode(selectedNodeSnapshot.value || selectedNode.value)
+)
 
 function normalizeNodes(nodes: RawNode[], degree: Record<string, number>): NormalizedNode[] {
   return nodes
@@ -312,7 +322,7 @@ function visEdgeFrom(edge: NormalizedEdge) {
     title: edge.type,
     value: edge.value,
     raw: edge.raw,
-    color: { color: 'rgba(148, 163, 184, 0.32)', opacity: 0.32 },
+    color: { color: 'rgba(148, 163, 184, 0.12)', opacity: 0.12 },
     smooth: { enabled: true, type: 'dynamic' },
     arrows: { to: { enabled: true, scaleFactor: 0.45 } },
   }
@@ -345,8 +355,8 @@ function resetVisualState() {
   edgeDataSet.update(
     normalizedEdges.value.map((edge) => ({
       id: edge.id,
-      color: { color: 'rgba(148, 163, 184, 0.32)', opacity: 0.32 },
-      width: 1,
+      color: { color: 'rgba(148, 163, 184, 0.12)', opacity: 0.12 },
+      width: 0.5,
     }))
   )
 }
@@ -364,9 +374,9 @@ function applyFocusFade(nodeId: string) {
       const highlighted = node.id === nodeId || matchSet.has(node.id)
       return {
         id: node.id,
-        color: nodeColorForType(node.type, inFocus ? 1 : 0.18, highlighted),
-        borderWidth: node.id === nodeId ? 4 : highlighted ? 3 : 1,
-        opacity: inFocus ? 1 : 0.18,
+        color: nodeColorForType(node.type, inFocus ? 1 : 0.24, highlighted),
+        borderWidth: node.id === nodeId ? 5 : highlighted ? 3 : 1,
+        opacity: inFocus ? 1 : 0.24,
       }
     })
   )
@@ -377,10 +387,10 @@ function applyFocusFade(nodeId: string) {
       return {
         id: edge.id,
         color: {
-          color: connected ? 'rgba(96, 165, 250, 0.82)' : 'rgba(148, 163, 184, 0.08)',
-          opacity: connected ? 0.82 : 0.08,
+          color: connected ? 'rgba(250, 204, 21, 0.78)' : 'rgba(148, 163, 184, 0.12)',
+          opacity: connected ? 0.78 : 0.12,
         },
-        width: connected ? 2.5 : 0.6,
+        width: connected ? 3 : 0.7,
       }
     })
   )
@@ -389,6 +399,8 @@ function applyFocusFade(nodeId: string) {
 function focusNode(nodeId: string) {
   if (!network || !nodeById.value[nodeId]) return
   selectedNodeId.value = nodeId
+  selectedNodeSnapshot.value = nodeById.value[nodeId]
+  inspectorVersion.value += 1
   noSearchResult.value = false
   network.selectNodes([nodeId])
   network.focus(nodeId, {
@@ -401,6 +413,8 @@ function focusNode(nodeId: string) {
 
 function clearFocus() {
   selectedNodeId.value = ''
+  selectedNodeSnapshot.value = null
+  inspectorVersion.value += 1
   if (network) network.unselectAll()
   resetVisualState()
   updateDebugState()
@@ -453,6 +467,8 @@ function onFiltersChanged() {
   refreshViews()
   if (selectedNodeId.value && !isNodeVisible(selectedNodeId.value)) {
     selectedNodeId.value = ''
+    selectedNodeSnapshot.value = null
+    inspectorVersion.value += 1
   }
   resetVisualState()
   updateDebugState()
@@ -460,13 +476,21 @@ function onFiltersChanged() {
 
 function fitGraph() {
   if (!network) return
-  network.fit({ animation: { duration: 350, easingFunction: 'easeInOutQuad' } })
+  network.fit({
+    animation: { duration: 350, easingFunction: 'easeInOutQuad' },
+    maxZoomLevel: 1.35,
+  })
+  updateDebugState()
 }
 
 function resetGraphView() {
   clearFocus()
   if (network) {
-    network.fit({ animation: { duration: 350, easingFunction: 'easeInOutQuad' } })
+    network.fit({
+      animation: { duration: 350, easingFunction: 'easeInOutQuad' },
+      maxZoomLevel: 1.35,
+    })
+    updateDebugState()
   }
 }
 
@@ -485,7 +509,8 @@ async function toggleFullscreen() {
   window.setTimeout(() => {
     if (network) {
       network.redraw()
-      network.fit({ animation: false })
+      network.fit({ animation: false, maxZoomLevel: 1.35 })
+      updateDebugState()
     }
   }, 180)
 }
@@ -510,22 +535,107 @@ function formatMetadataEntries(metadata: Record<string, unknown>) {
 
 function updateDebugState() {
   if (typeof window === 'undefined') return
+  const rect = networkRef.value?.getBoundingClientRect()
+  const networkScale =
+    network && typeof network.getScale === 'function' ? Number(network.getScale()) : 0
+  const networkPosition =
+    network && typeof network.getViewPosition === 'function'
+      ? network.getViewPosition()
+      : { x: 0, y: 0 }
   ;(window as any).__graphifyExplorerState = {
-    ready: state.value === 'ready',
+    ready: state.value === 'ready' && graphStabilized.value && fitComplete.value,
+    loaded: state.value === 'ready',
+    stabilized: graphStabilized.value,
+    fitComplete: fitComplete.value,
+    renderPass: renderPass.value,
     selectedNodeId: selectedNodeId.value,
+    selectedNodeFound: !!(selectedNodeSnapshot.value || selectedNode.value),
+    selectedNodeLabel: (selectedNodeSnapshot.value || selectedNode.value)?.label || '',
     searchQuery: searchQuery.value,
     searchMatchIds: searchMatchIds.value.slice(),
     typeFilters: typeFilters.value.slice(),
     communityFilters: communityFilters.value.slice(),
     visibleNodes: visibleNodeIds.value.size,
+    visibleEdges: normalizedEdges.value.filter((edge) => isEdgeVisible(edge)).length,
     totalNodes: normalizedNodes.value.length,
     totalEdges: normalizedEdges.value.length,
+    networkWidth: rect ? Math.round(rect.width) : 0,
+    networkHeight: rect ? Math.round(rect.height) : 0,
+    networkScale: Number.isFinite(networkScale) ? networkScale : 0,
+    networkPosition,
     inspectorOpen: !!selectedNodeId.value,
   }
 }
 
+function afterAnimationFrames(count = 2): Promise<void> {
+  if (typeof window === 'undefined') return Promise.resolve()
+  return new Promise((resolve) => {
+    const step = (remaining: number) => {
+      if (remaining <= 0) resolve()
+      else window.requestAnimationFrame(() => step(remaining - 1))
+    }
+    step(count)
+  })
+}
+
+async function completeInitialFit() {
+  if (!network) return
+  fitComplete.value = false
+  renderPass.value += 1
+  await afterAnimationFrames(2)
+  if (!network) return
+  network.redraw()
+  network.fit({ animation: false, maxZoomLevel: 1.35 })
+  let scale = typeof network.getScale === 'function' ? Number(network.getScale()) : 0
+  if (Number.isFinite(scale) && scale > 0 && scale < 0.85) {
+    const positions = network.getPositions(normalizedNodes.value.map((node) => node.id))
+    const points = Object.values(positions) as Array<{ x: number; y: number }>
+    if (points.length > 0) {
+      const center = points.reduce(
+        (acc, point) => ({ x: acc.x + point.x / points.length, y: acc.y + point.y / points.length }),
+        { x: 0, y: 0 }
+      )
+      const compression = Math.max(0.06, Math.min(0.85, scale / 0.95))
+      for (const [id, point] of Object.entries(positions)) {
+        network.moveNode(
+          id,
+          center.x + (point as { x: number; y: number }).x * compression - center.x * compression,
+          center.y + (point as { x: number; y: number }).y * compression - center.y * compression
+        )
+      }
+      renderPass.value += 1
+      network.redraw()
+      network.fit({ animation: false, maxZoomLevel: 1.35 })
+      scale = typeof network.getScale === 'function' ? Number(network.getScale()) : scale
+    }
+  }
+  if (Number.isFinite(scale) && scale > 0 && scale < 0.85) {
+    network.moveTo({ scale: 0.95, animation: false })
+  }
+  fitComplete.value = true
+  renderPass.value += 1
+  updateDebugState()
+}
+
+function fitAfterRender(delay = 80, markComplete = false) {
+  if (typeof window === 'undefined') return
+  window.setTimeout(() => {
+    if (!network) return
+    network.redraw()
+    network.fit({ animation: false, maxZoomLevel: 1.35 })
+    if (markComplete) {
+      fitComplete.value = true
+      renderPass.value += 1
+    }
+    updateDebugState()
+  }, delay)
+}
+
 function setupNetwork() {
   if (!networkRef.value || !NetworkCtor || !DataSetCtor || !DataViewCtor) return
+  graphStabilized.value = false
+  fitComplete.value = false
+  updateDebugState()
   const nodes = normalizedNodes.value.map(visNodeFrom)
   const edges = normalizedEdges.value.map(visEdgeFrom)
   nodeDataSet = new DataSetCtor(nodes)
@@ -555,15 +665,15 @@ function setupNetwork() {
         enabled: true,
         solver: 'forceAtlas2Based',
         forceAtlas2Based: {
-          gravitationalConstant: -48,
-          centralGravity: 0.01,
-          springLength: 120,
-          springConstant: 0.08,
-          avoidOverlap: 0.45,
+          gravitationalConstant: -36,
+          centralGravity: 0.02,
+          springLength: 85,
+          springConstant: 0.09,
+          avoidOverlap: 0.5,
         },
         stabilization: {
           enabled: true,
-          iterations: 180,
+          iterations: 240,
           updateInterval: 25,
         },
       },
@@ -572,8 +682,8 @@ function setupNetwork() {
         font: {
           color: '#e5e7eb',
           face: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-          size: 14,
-          strokeWidth: 3,
+          size: 12,
+          strokeWidth: 2,
           strokeColor: '#020617',
         },
         scaling: {
@@ -600,8 +710,13 @@ function setupNetwork() {
     if (nodeId) onNodeDoubleClick(String(nodeId))
   })
   network.once('stabilizationIterationsDone', () => {
-    fitGraph()
+    graphStabilized.value = true
+    completeInitialFit()
   })
+  network.once('afterDrawing', () => {
+    if (graphStabilized.value) updateDebugState()
+  })
+  fitAfterRender(260)
 }
 
 async function loadGraphData() {
@@ -629,10 +744,13 @@ async function loadGraphData() {
     state.value = 'ready'
     await nextTick()
     setupNetwork()
+    fitAfterRender(360)
     updateDebugState()
   } catch (error: any) {
     state.value = 'error'
     errorMessage.value = error?.message || String(error)
+    graphStabilized.value = false
+    fitComplete.value = false
     updateDebugState()
   }
 }
@@ -653,7 +771,8 @@ function onFullscreenChange() {
   window.setTimeout(() => {
     if (network) {
       network.redraw()
-      network.fit({ animation: false })
+      network.fit({ animation: false, maxZoomLevel: 1.35 })
+      updateDebugState()
     }
   }, 120)
 }
@@ -788,23 +907,32 @@ onBeforeUnmount(() => {
         </div>
       </aside>
 
-      <div
-        ref="networkRef"
-        class="graphify-network"
-        data-testid="graphify-network"
-        aria-label="Graphify knowledge graph network"
-      ></div>
+      <div class="graphify-network-wrap">
+        <div
+          ref="networkRef"
+          class="graphify-network"
+          data-testid="graphify-network"
+          aria-label="Graphify knowledge graph network"
+        ></div>
+        <div
+          v-if="!fitComplete"
+          class="graphify-rendering"
+          data-testid="graphify-rendering"
+        >
+          Rendering graph...
+        </div>
+      </div>
 
       <aside class="graphify-panel graphify-inspector" data-testid="graphify-inspector">
-        <template v-if="selectedNode">
+        <template :key="`selected-${inspectorVersion}`" v-if="selectedNodeSnapshot">
           <p class="graphify-kicker">Selected node</p>
-          <h3>{{ selectedNode.label }}</h3>
+          <h3>{{ selectedNodeSnapshot.label }}</h3>
           <dl class="graphify-facts">
-            <div><dt>Type</dt><dd>{{ selectedNode.type }}</dd></div>
-            <div><dt>ID</dt><dd>{{ selectedNode.id }}</dd></div>
-            <div><dt>Slug</dt><dd>{{ slugFromNode(selectedNode) }}</dd></div>
-            <div><dt>Degree</dt><dd>{{ selectedNode.degree }}</dd></div>
-            <div v-if="selectedNode.community"><dt>Community</dt><dd>{{ selectedNode.community }}</dd></div>
+            <div><dt>Type</dt><dd>{{ selectedNodeSnapshot.type }}</dd></div>
+            <div><dt>ID</dt><dd>{{ selectedNodeSnapshot.id }}</dd></div>
+            <div><dt>Slug</dt><dd>{{ slugFromNode(selectedNodeSnapshot) }}</dd></div>
+            <div><dt>Degree</dt><dd>{{ selectedNodeSnapshot.degree }}</dd></div>
+            <div v-if="selectedNodeSnapshot.community"><dt>Community</dt><dd>{{ selectedNodeSnapshot.community }}</dd></div>
           </dl>
 
           <button
@@ -829,11 +957,11 @@ onBeforeUnmount(() => {
             </ul>
           </section>
 
-          <section v-if="formatMetadataEntries(selectedNode.metadata).length">
+          <section v-if="formatMetadataEntries(selectedNodeSnapshot.metadata).length">
             <h4>Metadata</h4>
             <dl class="graphify-metadata">
               <div
-                v-for="entry in formatMetadataEntries(selectedNode.metadata)"
+                v-for="entry in formatMetadataEntries(selectedNodeSnapshot.metadata)"
                 :key="entry.key"
               >
                 <dt>{{ entry.key }}</dt>
@@ -842,7 +970,7 @@ onBeforeUnmount(() => {
             </dl>
           </section>
         </template>
-        <template v-else>
+        <template :key="`empty-${inspectorVersion}`" v-else>
           <p class="graphify-kicker">Inspector</p>
           <h3>No node selected</h3>
           <p class="graphify-muted">
@@ -924,9 +1052,31 @@ onBeforeUnmount(() => {
   max-width: 100%;
 }
 
+.graphify-network-wrap {
+  position: relative;
+  min-width: 0;
+  height: min(760px, calc(100vh - 220px));
+  min-height: min(760px, calc(100vh - 220px));
+}
+
 .graphify-network {
+  width: 100%;
+  height: 100%;
   min-width: 0;
   min-height: min(760px, calc(100vh - 220px));
+}
+
+.graphify-rendering {
+  position: absolute;
+  inset: 1rem auto auto 1rem;
+  z-index: 3;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid rgba(147, 197, 253, 0.3);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.82);
+  color: #bfdbfe;
+  font-size: 0.8rem;
+  pointer-events: none;
 }
 
 .graphify-panel {
@@ -1096,7 +1246,9 @@ onBeforeUnmount(() => {
   min-height: calc(100vh - 75px);
 }
 
+:fullscreen .graphify-network-wrap,
 :fullscreen .graphify-network {
+  height: calc(100vh - 75px);
   min-height: calc(100vh - 75px);
 }
 
@@ -1134,7 +1286,9 @@ onBeforeUnmount(() => {
     border: 0;
   }
 
+  .graphify-network-wrap,
   .graphify-network {
+    height: 520px;
     min-height: 520px;
     order: -1;
   }

@@ -142,8 +142,15 @@ class LearnGenerator:
             example = extract_section(read_note(record), "Concrete example / toy implementation")
             if example:
                 title = display_title(record, mark_missing=True)
-                return [f"From {resource_link(record, title)}:", "", example[:1200]]
+                return [f"From {resource_link(record, title)}:", "", self._safe_markdown_excerpt(example, 1200)]
         return ["- Needs a source-backed example from future notes."]
+
+    def _safe_markdown_excerpt(self, text: str, limit: int) -> str:
+        """Return a truncated Markdown excerpt without leaving code fences open."""
+        excerpt = text[:limit].rstrip()
+        if excerpt.count("```") % 2 == 1:
+            excerpt += "\n```"
+        return excerpt
 
     def _gaps(self, records: list[ResourceRecord]) -> list[str]:
         gaps: list[str] = []

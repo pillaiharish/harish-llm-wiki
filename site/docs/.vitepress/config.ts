@@ -1,9 +1,10 @@
 import { defineConfig } from 'vitepress'
+import { siteBranding } from './site-branding.generated'
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
-  title: "Harish LLM Wiki",
-  description: "Personal static learning wiki",
+  title: siteBranding.title,
+  description: siteBranding.description,
   
   // Clean URLs (no .html)
   cleanUrls: true,
@@ -19,19 +20,35 @@ export default defineConfig({
     // https://vitepress.dev/reference/default-theme-config
     nav: [
       { text: 'Home', link: '/' },
-      { text: 'Resources', link: '/resources/' },
-      { text: 'Topics', link: '/topics/' },
       { text: 'Learn', link: '/learn/' },
-      { text: 'Explorer', link: '/explorer/' },
+      { text: 'Resources', link: '/resources/' },
       { text: 'Graph', link: '/graph/' },
-      { text: 'Review', link: '/review/' },
-      { text: 'Revision', link: '/revision/' },
-      { text: 'Sources', link: '/sources/' },
-      { text: 'Timeline', link: '/timeline' },
-      { text: 'Concepts', link: '/concepts/' },
-      { text: 'Tags', link: '/tags/' },
-      { text: 'Gaps', link: '/gaps' },
-      { text: 'Chunks', link: '/chunks/' }
+      { text: 'Explorer', link: '/explorer/' },
+      {
+        text: 'Knowledge',
+        items: [
+          { text: 'Topics', link: '/topics/' },
+          { text: 'Concepts', link: '/concepts/' },
+          { text: 'Tags', link: '/tags/' },
+          { text: 'Sources', link: '/sources/' },
+        ],
+      },
+      {
+        text: 'Quality',
+        items: [
+          { text: 'Review', link: '/review/' },
+          { text: 'Revision', link: '/revision/' },
+          { text: 'Gaps', link: '/gaps' },
+        ],
+      },
+      {
+        text: 'Data',
+        items: [
+          { text: 'Ingest', link: '/ingest/' },
+          { text: 'Timeline', link: '/timeline' },
+          { text: 'Chunks', link: '/chunks/' },
+        ],
+      }
     ],
 
     sidebar: {
@@ -120,6 +137,14 @@ export default defineConfig({
           ]
         }
       ],
+      '/ingest/': [
+        {
+          text: 'Ingest',
+          items: [
+            { text: 'Workflow', link: '/ingest/' },
+          ]
+        }
+      ],
       '/search/': [
         {
           text: 'BM25 Search',
@@ -166,12 +191,12 @@ export default defineConfig({
     },
     
     footer: {
-      message: 'Generated with Harish LLM Wiki',
-      copyright: 'Copyright © 2024-2026'
+      message: siteBranding.footerMessage,
+      copyright: siteBranding.copyright
     },
     
     editLink: {
-      pattern: 'https://github.com/pillaiharish/harish-llm-wiki/edit/main/site/docs/:path',
+      pattern: siteBranding.githubEditPattern,
       text: 'Edit this page on GitHub'
     }
   },
@@ -188,8 +213,8 @@ export default defineConfig({
   head: [
     ['meta', { name: 'theme-color', content: '#3c3c3c' }],
     ['meta', { name: 'og:type', content: 'website' }],
-    ['meta', { name: 'og:title', content: 'Harish LLM Wiki' }],
-    ['meta', { name: 'og:description', content: 'Personal static learning wiki' }],
+    ['meta', { name: 'og:title', content: siteBranding.ogTitle }],
+    ['meta', { name: 'og:description', content: siteBranding.ogDescription }],
   ],
 
   // Vite build configuration

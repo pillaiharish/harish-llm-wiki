@@ -1008,7 +1008,7 @@ class TestBM25Boundaries:
 
         # Now create a minimal set of expected routes and confirm
         # the script exits 0.
-        for sub in ("graph", "chunks", "search"):
+        for sub in ("graph", "chunks", "search", "ingest"):
             (tmp_path / sub).mkdir(parents=True, exist_ok=True)
         (tmp_path / "graph").joinpath("index.md").write_text("# Graph\n", encoding="utf-8")
         (tmp_path / "graph").joinpath("explore.md").write_text("# Explore\n", encoding="utf-8")
@@ -1017,6 +1017,7 @@ class TestBM25Boundaries:
         (tmp_path / "graph").joinpath("resource-relationships.md").write_text(
             "# RR\n", encoding="utf-8"
         )
+        (tmp_path / "ingest").joinpath("index.md").write_text("# Ingest\n", encoding="utf-8")
         (tmp_path / "chunks").joinpath("index.md").write_text("# Chunks\n", encoding="utf-8")
         (tmp_path / "search").joinpath("bm25.md").write_text("# BM25\n", encoding="utf-8")
         (tmp_path / "public" / "chunks").mkdir(parents=True, exist_ok=True)

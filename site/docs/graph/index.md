@@ -35,8 +35,8 @@ a backend service.
 ## At a Glance
 
 <div class="graph-stat-grid">
-  <div class="graph-stat-card"><span class="graph-stat-kicker">Nodes</span><strong>65</strong><span>Entities currently in the graph.</span></div>
-  <div class="graph-stat-card"><span class="graph-stat-kicker">Edges</span><strong>1069</strong><span>Connections generated from the existing wiki data.</span></div>
+  <div class="graph-stat-card"><span class="graph-stat-kicker">Nodes</span><strong>69</strong><span>Entities currently in the graph.</span></div>
+  <div class="graph-stat-card"><span class="graph-stat-kicker">Edges</span><strong>1150</strong><span>Connections generated from the existing wiki data.</span></div>
   <div class="graph-stat-card"><span class="graph-stat-kicker">Node types</span><strong>5</strong><span>Distinct entity categories ready to explore.</span></div>
   <div class="graph-stat-card"><span class="graph-stat-kicker">Edge types</span><strong>11</strong><span>Different relationship kinds available in the current build.</span></div>
 </div>
@@ -68,14 +68,14 @@ in the wiki build rather than by a runtime inference layer.
 ## Stats
 
 - Schema version: `1.0.0`
-- Nodes: 65
-- Edges: 1069
+- Nodes: 69
+- Edges: 1150
 
 ### Node types
 
 | Type | Count |
 |---|---:|
-| concept | 14 |
+| concept | 18 |
 | learn_chapter | 10 |
 | resource | 24 |
 | review_page | 7 |
@@ -85,18 +85,18 @@ in the wiki build rather than by a runtime inference layer.
 
 | Type | Count |
 |---|---:|
-| concept_in_topic | 95 |
-| learn_chapter_uses_resource | 104 |
-| resource_has_topic | 43 |
-| resource_mentions_concept | 135 |
-| resource_same_source_type_as_resource | 123 |
-| resource_shares_concept_with_resource | 190 |
-| resource_shares_topic_with_resource | 60 |
-| resource_similar_to_resource | 191 |
-| review_page_reviews_resource | 40 |
-| topic_has_resource | 43 |
+| concept_in_topic | 103 |
+| learn_chapter_uses_resource | 110 |
+| resource_has_topic | 45 |
+| resource_mentions_concept | 146 |
+| resource_same_source_type_as_resource | 126 |
+| resource_shares_concept_with_resource | 210 |
+| resource_shares_topic_with_resource | 68 |
+| resource_similar_to_resource | 211 |
+| review_page_reviews_resource | 41 |
+| topic_has_resource | 45 |
 | topic_related_to_topic | 45 |
 
 ## Provenance
 
-- Generated: 2026-06-10T10:27:42.006357+00:00
+- Generated: 2026-06-10T19:49:15.385239+00:00

@@ -127,6 +127,24 @@ function resetFilters(): void {
   staleFilter.value = ''
 }
 
+function displaySummary(summary?: string): string {
+  if (!summary) return ''
+  const cleaned = summary
+    .split(/\r?\n/)
+    .filter((line) => !line.trim().startsWith('|'))
+    .join(' ')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/\|[-\s:|]+\|/g, ' ')
+    .replace(/\|\s*Date learned\s*\|[\s\S]*$/i, ' ')
+    .replace(/\|\s*Date\s*\|[\s\S]*$/i, ' ')
+    .replace(/#{1,6}\s*/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return cleaned.length > 260 ? `${cleaned.slice(0, 257).trimEnd()}...` : cleaned
+}
+
 onMounted(() => {
   void loadIndex()
 })
@@ -253,7 +271,7 @@ onBeforeUnmount(() => {
             {{ item.title || '(untitled)' }}
           </span>
           <code v-if="item.type" class="se-type">{{ item.type }}</code>
-          <span v-if="item.summary" class="se-summary">{{ item.summary }}</span>
+          <span v-if="displaySummary(item.summary)" class="se-summary">{{ displaySummary(item.summary) }}</span>
         </li>
       </ul>
     </div>
@@ -264,16 +282,16 @@ onBeforeUnmount(() => {
 .search-explorer {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  margin: 0.5rem 0 1rem;
+  gap: 1rem;
+  margin: 0.75rem 0 1.25rem;
 }
 .se-stats {
   font-size: 0.95rem;
   color: var(--vp-c-text-2, #555);
   border-left: 3px solid var(--vp-c-divider, #ddd);
-  padding: 0.25rem 0.6rem;
+  padding: 0.55rem 0.75rem;
   background: var(--vp-c-bg-soft, #fafafa);
-  border-radius: 4px;
+  border-radius: 8px;
 }
 .se-stats[data-state='error'] {
   border-left-color: #c0392b;
@@ -285,33 +303,38 @@ onBeforeUnmount(() => {
 .se-controls {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  align-items: center;
-  padding: 0.5rem;
+  gap: 0.65rem;
+  align-items: flex-end;
+  padding: 0.8rem;
   border: 1px solid var(--vp-c-divider, #ddd);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--vp-c-bg-soft, #fafafa);
 }
 .se-label {
+  display: grid;
+  gap: 0.2rem;
   font-weight: 600;
-  margin-right: 0.15rem;
+  color: var(--vp-c-text-1, #222);
 }
 .se-controls input[type='search'],
 .se-controls select {
-  padding: 0.25rem 0.5rem;
+  max-width: 100%;
+  padding: 0.42rem 0.55rem;
   border: 1px solid var(--vp-c-divider, #ccc);
-  border-radius: 4px;
+  border-radius: 6px;
   background: var(--vp-c-bg, #fff);
+  font: inherit;
 }
 .se-controls input[type='search'] {
-  min-width: 220px;
+  min-width: 240px;
 }
 .se-button {
-  padding: 0.3rem 0.7rem;
+  padding: 0.45rem 0.75rem;
   border: 1px solid var(--vp-c-divider, #ccc);
-  border-radius: 4px;
+  border-radius: 6px;
   background: var(--vp-c-bg, #fff);
   cursor: pointer;
+  font: inherit;
 }
 .se-button:hover {
   background: var(--vp-c-default-soft, #eef);
@@ -320,24 +343,26 @@ onBeforeUnmount(() => {
   list-style: none;
   padding: 0;
   margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
+  display: grid;
+  gap: 0.55rem;
 }
 .se-row {
   border: 1px solid var(--vp-c-divider, #ddd);
-  border-radius: 4px;
-  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  padding: 0.75rem 0.85rem;
   background: var(--vp-c-bg, #fff);
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
+  gap: 0.45rem 0.55rem;
   align-items: baseline;
+  min-width: 0;
 }
 .se-link {
+  min-width: 0;
   font-weight: 600;
   color: var(--vp-c-brand-1, #3451b2);
   text-decoration: none;
+  overflow-wrap: anywhere;
 }
 .se-link:hover {
   text-decoration: underline;
@@ -348,15 +373,18 @@ onBeforeUnmount(() => {
 }
 .se-type {
   font-size: 0.75rem;
-  padding: 0.05rem 0.4rem;
-  border-radius: 3px;
+  padding: 0.08rem 0.42rem;
+  border-radius: 999px;
   background: var(--vp-c-default-soft, #eef);
   color: var(--vp-c-text-2, #555);
+  line-height: 1.45;
 }
 .se-summary {
   font-size: 0.9rem;
   color: var(--vp-c-text-2, #555);
   flex: 1 1 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .se-error {
   color: #c0392b;
@@ -369,5 +397,18 @@ onBeforeUnmount(() => {
 .se-empty {
   color: var(--vp-c-text-2, #555);
   font-style: italic;
+}
+
+@media (max-width: 720px) {
+  .se-controls,
+  .se-controls input[type='search'],
+  .se-controls select,
+  .se-button {
+    width: 100%;
+  }
+
+  .se-controls input[type='search'] {
+    min-width: 0;
+  }
 }
 </style>

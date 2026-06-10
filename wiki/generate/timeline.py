@@ -116,6 +116,7 @@ class TimelineGenerator:
             "A chronological view of what I've learned.",
             "",
         ]
+        uncategorized_anchor_written = False
         
         for period in periods:
             lines.extend([
@@ -129,8 +130,35 @@ class TimelineGenerator:
                 grouped[topic].append(entry)
 
             for topic_slug in sorted(grouped):
-                topic_name = TOPIC_DEFINITIONS.get(topic_slug, {}).get("name", topic_slug.title())
-                lines.extend([f"### {topic_name}", ""])
+                if topic_slug == "uncategorized":
+                    if not uncategorized_anchor_written:
+                        lines.extend(
+                            [
+                                '<span id="needs-classification"></span>',
+                                '<span id="uncategorized"></span>',
+                                "",
+                            ]
+                        )
+                        uncategorized_anchor_written = True
+                    topic_name = "Needs classification"
+                    lines.extend(
+                        [
+                            f"### {topic_name}",
+                            "",
+                            '<div class="timeline-classification-note">',
+                            "These resources are intake items missing topic or concept",
+                            "metadata. They are not learning categories yet.",
+                            'Fix them from <a href="/review/">Review</a>,',
+                            '<a href="/resources/">Resources</a>, or the',
+                            '<a href="/ingest/">Ingest workflow</a>.',
+                            '<a class="timeline-classification-cta" href="/ingest/#after-ingest">Fix classification metadata</a>',
+                            "</div>",
+                            "",
+                        ]
+                    )
+                else:
+                    topic_name = TOPIC_DEFINITIONS.get(topic_slug, {}).get("name", topic_slug.title())
+                    lines.extend([f"### {topic_name}", ""])
                 for entry in grouped[topic_slug]:
                     lines.append(f"- [{md_table_cell(entry.resource_title)}]({resource_route(entry.resource_id)}) ({entry.resource_type.value})")
                     if entry.summary:
