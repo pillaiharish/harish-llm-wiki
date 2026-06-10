@@ -918,15 +918,15 @@ onBeforeUnmount(() => {
 .graphify-stage {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr) minmax(260px, 320px);
-  min-height: 720px;
+  grid-template-columns: 280px minmax(560px, 1fr) 360px;
+  min-height: min(760px, calc(100vh - 220px));
   width: 100%;
   max-width: 100%;
 }
 
 .graphify-network {
   min-width: 0;
-  min-height: 720px;
+  min-height: min(760px, calc(100vh - 220px));
 }
 
 .graphify-panel {
@@ -944,6 +944,7 @@ onBeforeUnmount(() => {
 
 .graphify-inspector {
   border-left: 1px solid rgba(148, 163, 184, 0.18);
+  max-height: min(760px, calc(100vh - 220px));
   overflow: auto;
 }
 
@@ -997,6 +998,13 @@ onBeforeUnmount(() => {
   overflow-wrap: anywhere;
 }
 
+.graphify-check span,
+.graphify-neighbors span,
+.graphify-inspector h3 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .graphify-counts {
   display: grid;
   gap: 0.25rem;
@@ -1028,8 +1036,9 @@ onBeforeUnmount(() => {
 .graphify-facts div,
 .graphify-metadata div {
   display: grid;
-  grid-template-columns: minmax(5rem, 0.35fr) minmax(0, 1fr);
-  gap: 0.6rem;
+  grid-template-columns: minmax(6.25rem, 0.42fr) minmax(0, 1fr);
+  gap: 0.45rem 0.8rem;
+  align-items: start;
 }
 
 .graphify-facts dt,
@@ -1043,6 +1052,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
+  word-break: break-word;
   color: #e5e7eb;
 }
 
@@ -1070,6 +1080,7 @@ onBeforeUnmount(() => {
   gap: 0.15rem;
   padding: 0.5rem 0.6rem;
   text-align: left;
+  min-width: 0;
 }
 
 .graphify-neighbors small {
@@ -1089,6 +1100,19 @@ onBeforeUnmount(() => {
   min-height: calc(100vh - 75px);
 }
 
+@media (max-width: 1240px) {
+  .graphify-stage {
+    grid-template-columns: minmax(240px, 280px) minmax(560px, 1fr);
+  }
+
+  .graphify-inspector {
+    grid-column: 1 / -1;
+    max-height: 28rem;
+    border-top: 1px solid rgba(148, 163, 184, 0.18);
+    border-left: 0;
+  }
+}
+
 @media (max-width: 980px) {
   .graphify-explorer {
     overflow: visible;
@@ -1106,6 +1130,7 @@ onBeforeUnmount(() => {
 
   .graphify-left-panel,
   .graphify-inspector {
+    max-height: none;
     border: 0;
   }
 

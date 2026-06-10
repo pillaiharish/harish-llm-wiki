@@ -2423,7 +2423,7 @@ const selectedDisplay = computed<string>(() => {
   min-width: 0;
 }
 .graph-explorer-workspace .ge-workspace {
-  grid-template-columns: minmax(0, 1.8fr) minmax(320px, 0.95fr);
+  grid-template-columns: minmax(620px, 1fr) minmax(320px, 420px);
 }
 .ge-dashboard {
   padding: 0.85rem 1rem;
@@ -2471,6 +2471,10 @@ const selectedDisplay = computed<string>(() => {
   border-radius: 6px;
   position: relative;
   overflow: hidden;
+}
+.graph-explorer-workspace .ge-canvas {
+  height: min(760px, calc(100vh - 240px));
+  min-height: 620px;
 }
 .ge-list-pane,
 .ge-details-pane {
@@ -2643,6 +2647,10 @@ const selectedDisplay = computed<string>(() => {
     max-width: 100%;
   }
   .ge-canvas {
+    min-height: 420px;
+    height: 520px;
+  }
+  .graph-explorer-workspace .ge-canvas {
     min-height: 420px;
     height: 520px;
   }

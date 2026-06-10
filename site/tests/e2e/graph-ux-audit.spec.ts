@@ -9,7 +9,7 @@ const SCREENSHOT_DIR = path.resolve(
   process.cwd(),
   '..',
   '.agent-sessions',
-  'prompt43_graph_browser_audit',
+  process.env.GRAPH_UX_AUDIT_ID || 'prompt43_graph_browser_audit',
   'screenshots'
 )
 
@@ -38,6 +38,13 @@ async function expectNoHorizontalOverflow(page: Page) {
     overflow.overflow,
     `page overflows horizontally: scrollWidth=${overflow.scrollWidth}, innerWidth=${overflow.innerWidth}`
   ).toBe(false)
+}
+
+async function expectLocatorMinWidth(locator: ReturnType<Page['locator']>, minWidth: number, label: string) {
+  const box = await locator.boundingBox()
+  expect(box, `${label} has no bounding box`).not.toBeNull()
+  expect(box!.width, `${label} width ${box!.width}px should be > ${minWidth}px`).toBeGreaterThan(minWidth)
+  return box!
 }
 
 async function captureScreenshot(page: Page, name: string) {
@@ -118,8 +125,8 @@ test('graph explore default and deep-link states render early without overflow',
   await expect(page.getByRole('heading', { name: 'Graph Workspace', level: 1 })).toBeVisible()
   const desktopCanvas = page.locator('#graph-canvas')
   await expect(desktopCanvas).toBeVisible()
-  const desktopBox = await desktopCanvas.boundingBox()
-  expect(desktopBox, 'desktop graph canvas has no bounding box').not.toBeNull()
+  await expectLocatorMinWidth(page.locator('.graph-explorer'), 1000, 'desktop explore workspace')
+  const desktopBox = await expectLocatorMinWidth(desktopCanvas, 500, 'desktop graph canvas')
   expect(desktopBox!.y, `desktop graph canvas starts too low at ${desktopBox!.y}px`).toBeLessThan(960)
   await expectNoHorizontalOverflow(page)
   await captureScreenshot(page, 'graph-explore-default-desktop')
@@ -212,8 +219,12 @@ test('graphify supports deterministic search/filter controls without overflow', 
   await expect(page.getByTestId('graphify-explorer')).toBeVisible()
   await expect(page.getByTestId('graphify-network')).toBeVisible()
 
-  const networkBox = await page.getByTestId('graphify-network').boundingBox()
-  expect(networkBox, 'graphify network has no bounding box').not.toBeNull()
+  await expectLocatorMinWidth(page.getByTestId('graphify-explorer'), 1000, 'desktop graphify workspace')
+  const networkBox = await expectLocatorMinWidth(
+    page.getByTestId('graphify-network'),
+    500,
+    'desktop graphify network'
+  )
   expect(networkBox!.y, `graphify network starts too low at ${networkBox!.y}px`).toBeLessThan(960)
   await expectNoHorizontalOverflow(page)
   await captureScreenshot(page, 'graphify-default-desktop')
