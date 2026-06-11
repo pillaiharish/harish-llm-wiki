@@ -1271,7 +1271,7 @@ class TestStaticRoutes:
 
         # Now create a minimal set of expected routes (including
         # the new retrieval route) and confirm the script exits 0.
-        for sub in ("graph", "chunks", "search", "public", "ingest", "control", "settings"):
+        for sub in ("graph", "chunks", "search", "public", "ingest", "operations", "control", "settings"):
             (tmp_path / sub).mkdir(parents=True, exist_ok=True)
         (tmp_path / "public" / "chunks").mkdir(parents=True, exist_ok=True)
         (tmp_path / "public" / "search").mkdir(parents=True, exist_ok=True)
@@ -1283,6 +1283,7 @@ class TestStaticRoutes:
             "# RR\n", encoding="utf-8"
         )
         (tmp_path / "ingest").joinpath("index.md").write_text("# Ingest\n", encoding="utf-8")
+        (tmp_path / "operations").joinpath("index.md").write_text("# Operations\n", encoding="utf-8")
         (tmp_path / "control").joinpath("index.md").write_text(
             "# Control\n", encoding="utf-8"
         )

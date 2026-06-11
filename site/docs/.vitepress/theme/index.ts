@@ -4,6 +4,7 @@ import ControlPlaneStatus from './components/ControlPlaneStatus.vue'
 import GraphExplorer from './components/GraphExplorer.vue'
 import GraphifyExplorer from './components/GraphifyExplorer.vue'
 import IngestCommandBuilder from './components/IngestCommandBuilder.vue'
+import OperationsDashboard from './components/OperationsDashboard.vue'
 import RuntimeIdentityProvider from './components/RuntimeIdentityProvider.vue'
 import RuntimeIdentitySettings from './components/RuntimeIdentitySettings.vue'
 import SearchExplorer from './components/SearchExplorer.vue'
@@ -21,6 +22,7 @@ export default {
     app.component('GraphExplorer', GraphExplorer)
     app.component('GraphifyExplorer', GraphifyExplorer)
     app.component('IngestCommandBuilder', IngestCommandBuilder)
+    app.component('OperationsDashboard', OperationsDashboard)
     app.component('RuntimeIdentitySettings', RuntimeIdentitySettings)
     app.component('SearchExplorer', SearchExplorer)
   },
