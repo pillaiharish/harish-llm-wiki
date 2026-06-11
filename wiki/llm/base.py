@@ -17,6 +17,7 @@ class LLMProvider(ABC):
         """
         self.model = model
         self.temperature = temperature
+        self.last_usage: dict | None = None
     
     @abstractmethod
     def generate(self, prompt: str, *, system: Optional[str] = None, 

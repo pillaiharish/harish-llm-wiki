@@ -16,7 +16,10 @@ Routes checked
 - ``/graph/graphify`` -> ``graph/graphify.md``
 - ``/graph/resource-relationships`` -> ``graph/resource-relationships.md``
 - ``/ingest/`` -> ``ingest/index.md``
+- ``/control/`` -> ``control/index.md``
+- ``/settings/`` -> ``settings/index.md``
 - ``/chunks/`` -> ``chunks/index.md``
+- ``/site-branding.json`` -> ``public/site-branding.json``
 - ``/public/chunks/chunks.json`` -> ``public/chunks/chunks.json``
 - ``/public/chunks/manifest.json`` -> ``public/chunks/manifest.json``
 - ``/search/bm25`` -> ``search/bm25.md`` (Prompt 28 BM25 report page)
@@ -68,7 +71,10 @@ def _expected_routes(site_dir: Path) -> List[Tuple[str, Path]]:
         ("/graph/viewer", site_dir / "graph" / "viewer.md"),
         ("/graph/resource-relationships", site_dir / "graph" / "resource-relationships.md"),
         ("/ingest/", site_dir / "ingest" / "index.md"),
+        ("/control/", site_dir / "control" / "index.md"),
+        ("/settings/", site_dir / "settings" / "index.md"),
         ("/chunks/", site_dir / "chunks" / "index.md"),
+        ("/site-branding.json", site_dir / "public" / "site-branding.json"),
         ("/public/chunks/chunks.json", site_dir / "public" / "chunks" / "chunks.json"),
         ("/public/chunks/manifest.json", site_dir / "public" / "chunks" / "manifest.json"),
         ("/search/bm25", site_dir / "search" / "bm25.md"),

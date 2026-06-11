@@ -1111,7 +1111,7 @@ class TestVectorBoundaries:
 
         # Now create a minimal set of expected routes (including
         # the new vector routes) and confirm the script exits 0.
-        for sub in ("graph", "chunks", "search", "public", "ingest"):
+        for sub in ("graph", "chunks", "search", "public", "ingest", "control", "settings"):
             (tmp_path / sub).mkdir(parents=True, exist_ok=True)
         (tmp_path / "public" / "chunks").mkdir(parents=True, exist_ok=True)
         (tmp_path / "public" / "search").mkdir(parents=True, exist_ok=True)
@@ -1123,8 +1123,25 @@ class TestVectorBoundaries:
             "# RR\n", encoding="utf-8"
         )
         (tmp_path / "ingest").joinpath("index.md").write_text("# Ingest\n", encoding="utf-8")
+        (tmp_path / "control").joinpath("index.md").write_text(
+            "# Control\n", encoding="utf-8"
+        )
+        (tmp_path / "settings").joinpath("index.md").write_text(
+            "# Settings\n", encoding="utf-8"
+        )
         (tmp_path / "chunks").joinpath("index.md").write_text("# Chunks\n", encoding="utf-8")
         (tmp_path / "search").joinpath("bm25.md").write_text("# BM25\n", encoding="utf-8")
+        (tmp_path / "public").joinpath("site-branding.json").write_text(
+            json.dumps(
+                {
+                    "schemaVersion": "runtime_identity_v1",
+                    "defaultOwnerName": "Harish",
+                    "defaultSiteTitle": "Harish LLM Wiki",
+                    "allowBrowserOverride": True,
+                }
+            ),
+            encoding="utf-8",
+        )
         (tmp_path / "public" / "chunks").joinpath("chunks.json").write_text("[]", encoding="utf-8")
         (tmp_path / "public" / "chunks").joinpath("manifest.json").write_text(
             json.dumps({"schema_version": "chunk_index_v1", "chunk_count": 0, "resource_count": 0}),

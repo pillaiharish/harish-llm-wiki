@@ -66,6 +66,7 @@ class OllamaCloudProvider(LLMProvider):
         """
         temp = temperature if temperature is not None else self.temperature
         max_tokens = config.LLM_MAX_OUTPUT_TOKENS
+        self.last_usage = None
         
         # Build messages
         messages = []
@@ -90,6 +91,11 @@ class OllamaCloudProvider(LLMProvider):
                 )
                 response.raise_for_status()
                 data = response.json()
+                self.last_usage = data.get("usage") or {
+                    "prompt_eval_count": data.get("prompt_eval_count"),
+                    "eval_count": data.get("eval_count"),
+                    "total_count": data.get("total_count"),
+                }
                 return data.get("message", {}).get("content", "")
             except httpx.HTTPStatusError as e:
                 last_error = e

@@ -32,6 +32,7 @@ from wiki.generate.citations import (
     strip_source_chunks_section,
 )
 from wiki.generate.learning_links import resolve_learning_links
+from wiki.runs import record_cache_hit, record_generation_run, utc_now
 
 
 def load_chunks(norm_dir: Path) -> Iterator[YouTubeChunk | WebpageChunk | MarkdownChunk]:
@@ -403,6 +404,12 @@ class NoteGenerator:
         if not self.should_regenerate(record, chunks_hash):
             print(f"  Cache hit for {record.id}")
             record.status = ResourceStatus.LLM_CACHE_HIT
+            record_cache_hit(
+                record=record,
+                provider=self.provider.provider_name,
+                model=self.provider.model,
+                prompt_hash=record.prompt_hash,
+            )
             return record.generated_note_path
         
         # Build metadata for prompt
@@ -431,7 +438,12 @@ class NoteGenerator:
         print(f"  Generating note for {record.id}...")
         record.extra.pop("note_repaired", None)
         record.extra.pop("repair_attempts", None)
-        content = self.provider.generate(prompt, system=SYSTEM_PROMPT)
+        content = self._generate_with_accounting(
+            record=record,
+            operation="note_generation",
+            prompt=prompt,
+            prompt_hash=prompt_hash,
+        )
         
         if not content:
             raise RuntimeError(f"Empty response from LLM for {record.id}")
@@ -495,7 +507,12 @@ class NoteGenerator:
                 validator_errors=repaired_errors,
                 invalid_output=repaired_output or initial_output,
             )
-            repaired_output = self.provider.generate(repair_prompt, system=SYSTEM_PROMPT)
+            repaired_output = self._generate_with_accounting(
+                record=record,
+                operation="note_repair",
+                prompt=repair_prompt,
+                prompt_hash=self.provider.compute_prompt_hash(repair_prompt, SYSTEM_PROMPT),
+            )
             if not repaired_output:
                 repaired_errors = ["empty repaired response from LLM"]
                 continue
@@ -633,6 +650,54 @@ class NoteGenerator:
         record.extra["note_generation_success"] = True
 
         return note_path
+
+    def _generate_with_accounting(
+        self,
+        *,
+        record: ResourceRecord,
+        operation: str,
+        prompt: str,
+        prompt_hash: str,
+    ) -> str:
+        """Call the provider and append run/token ledger accounting."""
+
+        started_at = utc_now()
+        try:
+            self.provider.last_usage = None
+            output = self.provider.generate(prompt, system=SYSTEM_PROMPT)
+        except Exception as exc:
+            record_generation_run(
+                record=record,
+                operation=operation,
+                provider=self.provider.provider_name,
+                model=self.provider.model,
+                prompt_hash=prompt_hash,
+                prompt=prompt,
+                system=SYSTEM_PROMPT,
+                output="",
+                provider_usage=getattr(self.provider, "last_usage", None),
+                status="failed",
+                error=f"{type(exc).__name__}: {exc}",
+                started_at=started_at,
+                completed_at=utc_now(),
+            )
+            raise
+
+        record_generation_run(
+            record=record,
+            operation=operation,
+            provider=self.provider.provider_name,
+            model=self.provider.model,
+            prompt_hash=prompt_hash,
+            prompt=prompt,
+            system=SYSTEM_PROMPT,
+            output=output,
+            provider_usage=getattr(self.provider, "last_usage", None),
+            status="success",
+            started_at=started_at,
+            completed_at=utc_now(),
+        )
+        return output
 
     def _save_failed_debug(
         self,

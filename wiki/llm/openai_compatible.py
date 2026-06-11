@@ -70,6 +70,7 @@ class OpenAICompatibleProvider(LLMProvider):
             Generated text
         """
         temp = temperature if temperature is not None else self.temperature
+        self.last_usage = None
         
         # Build messages
         messages = []
@@ -89,6 +90,7 @@ class OpenAICompatibleProvider(LLMProvider):
             )
             response.raise_for_status()
             data = response.json()
+            self.last_usage = data.get("usage")
             
             # Extract response
             choices = data.get("choices", [])

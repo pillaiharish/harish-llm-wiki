@@ -53,6 +53,7 @@ class OllamaLocalProvider(LLMProvider):
             Generated text
         """
         temp = temperature if temperature is not None else self.temperature
+        self.last_usage = None
         
         try:
             response = self.client.post(
@@ -69,6 +70,10 @@ class OllamaLocalProvider(LLMProvider):
             )
             response.raise_for_status()
             data = response.json()
+            self.last_usage = {
+                "prompt_eval_count": data.get("prompt_eval_count"),
+                "eval_count": data.get("eval_count"),
+            }
             
             return data.get("response", "")
             

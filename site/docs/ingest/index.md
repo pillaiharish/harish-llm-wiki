@@ -6,11 +6,17 @@ title: Ingest & Processing
 
 This page is a static local runbook. It helps you choose safe CLI commands, but it does not upload files, store browser-side secrets, or run provider calls from the webapp.
 
+**This page builds commands only.** Copy the command flow and run it from the nested repo folder in your terminal.
+
+Use the local control plane prompt next to test providers, validate API-token configuration, track token usage, or process resources from a UI.
+
 <ClientOnly>
   <IngestCommandBuilder />
 </ClientOnly>
 
 ## Choose Your Processing Mode
+
+These cards are secondary reference. Use the command builder above for the current command flow.
 
 <div class="ingest-mode-grid">
   <section class="wiki-card ingest-mode-card">
@@ -124,6 +130,7 @@ Example files:
   <a class="wiki-card ingest-link-card" href="/resources/">Resources</a>
   <a class="wiki-card ingest-link-card" href="/graph/graphify">Graphify graph</a>
   <a class="wiki-card ingest-link-card" href="/explorer/">Explorer search</a>
+  <a class="wiki-card ingest-link-card" href="/settings/">Display settings</a>
 </div>
 
 ## Common Mistakes

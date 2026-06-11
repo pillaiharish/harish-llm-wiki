@@ -20,29 +20,41 @@ const VIEWPORTS = [
   { name: 'mobile', width: 390, height: 844 },
 ]
 
+type AuditRoute = {
+  name: string
+  path: string
+}
+
+const DOCS_DIR = path.resolve(process.cwd(), 'docs')
+
+function generatedRoutes(section: string, limit: number): AuditRoute[] {
+  const dir = path.join(DOCS_DIR, section)
+  if (!fs.existsSync(dir)) return []
+  return fs
+    .readdirSync(dir)
+    .filter((file) => file.endsWith('.md') && file !== 'index.md')
+    .sort()
+    .slice(0, limit)
+    .map((file) => {
+      const slug = file.replace(/\.md$/, '')
+      return {
+        name: `${section}-${slug}`.replace(/[^a-z0-9]+/gi, '-').toLowerCase(),
+        path: `/${section}/${slug}`,
+      }
+    })
+}
+
 const ROUTES = [
   { name: 'home', path: '/' },
   { name: 'resources', path: '/resources/' },
-  {
-    name: 'resource-vllm',
-    path: '/resources/webpage_df11644e8c0603551fc44887813019ce9cd423157c4e69666ccb5c48b0b11dd1',
-  },
-  { name: 'resource-rag', path: '/resources/youtube_r2m9DbEmeqI' },
-  {
-    name: 'resource-pdf',
-    path: '/resources/pdf_bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697',
-  },
+  { name: 'sources', path: '/sources/' },
+  ...generatedRoutes('resources', 3),
   { name: 'topics', path: '/topics/' },
-  { name: 'topic-rag', path: '/topics/rag-retrieval' },
-  { name: 'topic-vllm', path: '/topics/vllm' },
-  { name: 'topic-evals', path: '/topics/llm-evals' },
+  ...generatedRoutes('topics', 3),
   { name: 'concepts', path: '/concepts/' },
-  { name: 'concept-attention', path: '/concepts/attention' },
-  { name: 'concept-chunking', path: '/concepts/chunking' },
-  { name: 'concept-embeddings', path: '/concepts/embeddings' },
+  ...generatedRoutes('concepts', 3),
   { name: 'learn', path: '/learn/' },
-  { name: 'learn-rag', path: '/learn/rag-retrieval' },
-  { name: 'learn-inference', path: '/learn/llm-inference' },
+  ...generatedRoutes('learn', 2),
   { name: 'explorer', path: '/explorer/' },
   { name: 'graph-index', path: '/graph/' },
   { name: 'graph-explore', path: '/graph/explore' },
@@ -58,7 +70,9 @@ const ROUTES = [
   { name: 'timeline-uncategorized', path: '/timeline#uncategorized' },
   { name: 'chunks', path: '/chunks/' },
   { name: 'ingest', path: '/ingest/' },
-]
+  { name: 'control', path: '/control/' },
+  { name: 'settings', path: '/settings/' },
+] satisfies AuditRoute[]
 
 function collectPageErrors(page: Page): string[] {
   const errors: string[] = []
@@ -82,6 +96,14 @@ async function waitForRouteReadiness(page: Page, routeName: string) {
   }
   if (routeName === 'ingest') {
     await expect(page.getByTestId('ingest-command-builder')).toBeVisible({ timeout: 20_000 })
+    return
+  }
+  if (routeName === 'control') {
+    await expect(page.getByTestId('control-plane')).toBeVisible({ timeout: 20_000 })
+    return
+  }
+  if (routeName === 'settings') {
+    await expect(page.getByTestId('runtime-identity-settings')).toBeVisible({ timeout: 20_000 })
     return
   }
   if (routeName === 'graph-explore' || routeName === 'graph-viewer') {
@@ -161,6 +183,21 @@ async function expectNoVisibleRawMarkdownTables(page: Page) {
   expect(visibleText, 'raw markdown table separator is visible').not.toContain('|---')
 }
 
+async function expectNoExtremelyNarrowGeneratedCells(page: Page) {
+  const badChips = await page
+    .locator('.wiki-status-chip, .wiki-type-chip, .wiki-provider-chip, .wiki-model-chip, .wiki-date-cell')
+    .evaluateAll((chips) =>
+      chips
+        .map((chip, index) => {
+          const rect = chip.getBoundingClientRect()
+          const text = (chip.textContent || '').trim()
+          return { index, text, width: rect.width, height: rect.height }
+        })
+        .filter((chip) => chip.text.length > 3 && (chip.width < 44 || chip.height > 34))
+    )
+  expect(badChips, `generated chips/cells look letter-wrapped: ${JSON.stringify(badChips)}`).toEqual([])
+}
+
 test('representative routes have stable formatting across viewports', async ({ page }) => {
   const errors = collectPageErrors(page)
 
@@ -174,6 +211,7 @@ test('representative routes have stable formatting across viewports', async ({ p
       await expectNavVisibleAndContained(page)
       await expectMeaningfulHeading(page, route.name)
       await expectNoVisibleRawMarkdownTables(page)
+      await expectNoExtremelyNarrowGeneratedCells(page)
       await expectNoHorizontalOverflow(page)
       await captureScreenshot(page, `${viewport.name}-${route.name}`)
     }
