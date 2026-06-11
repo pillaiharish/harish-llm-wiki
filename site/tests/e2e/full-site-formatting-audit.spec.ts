@@ -70,6 +70,7 @@ const ROUTES = [
   { name: 'timeline-uncategorized', path: '/timeline#uncategorized' },
   { name: 'chunks', path: '/chunks/' },
   { name: 'ingest', path: '/ingest/' },
+  { name: 'operations', path: '/operations/' },
   { name: 'control', path: '/control/' },
   { name: 'settings', path: '/settings/' },
 ] satisfies AuditRoute[]
@@ -100,6 +101,10 @@ async function waitForRouteReadiness(page: Page, routeName: string) {
   }
   if (routeName === 'control') {
     await expect(page.getByTestId('control-plane')).toBeVisible({ timeout: 20_000 })
+    return
+  }
+  if (routeName === 'operations') {
+    await expect(page.getByTestId('operations-dashboard')).toBeVisible({ timeout: 20_000 })
     return
   }
   if (routeName === 'settings') {

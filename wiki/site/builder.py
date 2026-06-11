@@ -1,9 +1,12 @@
 """Build VitePress site from generated content."""
 
 import shutil
+from collections import Counter
+from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
-from typing import List
+from typing import Any, List
+from urllib.parse import quote
 
 from wiki.config import config
 from wiki.resource_utils import (
@@ -86,6 +89,11 @@ class SiteBuilder:
         # ``self.data_site_dir / public / graph`` and will be picked up
         # by the ``public`` copy step below.
         self._build_knowledge_graph(records)
+
+        # Build a safe public operations snapshot (Prompt52F).
+        # This intentionally excludes local run/token-ledger JSONL data;
+        # local accounting is exposed only through the localhost control plane.
+        self._build_operations_snapshot(records)
 
         # Build the chunk index public copy + landing page (Prompt 27).
         # The data-dir files were already written by
@@ -323,6 +331,161 @@ Do not publish publicly unless content is appropriate for public sharing.
         
         index_path = resources_dir / "index.md"
         Storage.write_text(index_content, index_path)
+
+    def _build_operations_snapshot(self, records: List[ResourceRecord]) -> None:
+        """Build a safe public operations snapshot for the read-only dashboard."""
+
+        operations_dir = self.data_site_dir / "public" / "operations"
+        operations_dir.mkdir(parents=True, exist_ok=True)
+
+        resource_records = list(dedupe_records(records))
+        review_data = self._load_review_data()
+        review_by_id = self._review_flags_by_resource(review_data)
+        source_type_counts = Counter(record.source_type.value for record in resource_records)
+        status_counts = Counter(record.status.value for record in resource_records)
+
+        resources: list[dict[str, Any]] = []
+        for record in resource_records:
+            title = display_title(record, mark_missing=True)
+            review_flags = sorted(review_by_id.get(record.id, []))
+            topics = self._safe_string_list(record.extra.get("topics") or record.extra.get("topic_slugs"))
+            concepts = self._safe_string_list(record.extra.get("concepts") or record.extra.get("concept_slugs"))
+            tags = self._safe_string_list(record.tags)
+            search_query = quote(title or record.id)
+            graph_node = quote(f"resource:{record.id}", safe="")
+            item: dict[str, Any] = {
+                "id": record.id,
+                "title": title,
+                "route": resource_route(record.id),
+                "source_type": record.source_type.value,
+                "status": record.status.value,
+                "provider": record.llm_provider or "",
+                "model": record.llm_model or "",
+                "topics": topics,
+                "concepts": concepts,
+                "tags": tags,
+                "review_flags": review_flags,
+                "links": {
+                    "resource": resource_route(record.id),
+                    "review": self._review_link_for_flags(review_flags),
+                    "graphify": f"/graph/graphify?node={graph_node}",
+                    "explorer": f"/explorer/?q={search_query}",
+                },
+            }
+            public_url = self._public_url(record.original_url)
+            if public_url:
+                item["url"] = public_url
+            if record.failure_reason:
+                item["failure_reason"] = str(record.failure_reason)
+            resources.append(item)
+
+        snapshot = {
+            "schema_version": "operations_snapshot_v1",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "resource_count": len(resource_records),
+            "resources": resources,
+            "summary": {
+                "by_source_type": dict(sorted(source_type_counts.items())),
+                "by_status": dict(sorted(status_counts.items())),
+            },
+            "review_summary": {
+                "weak": len(review_data.get("weak", [])),
+                "fallback": len(review_data.get("fallback", [])),
+                "failed": len(review_data.get("failed", [])),
+                "missing_citations": len(review_data.get("missing_citations", [])),
+                "stale": len(review_data.get("stale", [])),
+                "manual": len(review_data.get("manual", [])),
+                "untitled": len(review_data.get("untitled", [])),
+            },
+            "graph_summary": self._load_graph_summary(),
+            "boundaries": {
+                "read_only": True,
+                "processing_actions": False,
+                "provider_generation": False,
+                "browser_credentials": False,
+            },
+        }
+
+        Storage.write_json(snapshot, operations_dir / "operations_snapshot.json")
+
+    def _load_review_data(self) -> dict[str, Any]:
+        review_path = self.data_site_dir / "review" / "review.json"
+        if not review_path.exists():
+            review_path = config.get_data_path("processed", "review", "review.json")
+        if not review_path.exists():
+            return {}
+        try:
+            payload = Storage.read_json(review_path)
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _review_flags_by_resource(review_data: dict[str, Any]) -> dict[str, set[str]]:
+        flags: dict[str, set[str]] = {}
+        for flag in ("weak", "fallback", "failed", "missing_citations", "stale", "manual", "untitled"):
+            items = review_data.get(flag) or []
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                resource_id = str(item.get("id") or "")
+                if resource_id:
+                    flags.setdefault(resource_id, set()).add(flag)
+        return flags
+
+    @staticmethod
+    def _review_link_for_flags(flags: list[str]) -> str:
+        if not flags:
+            return "/review/"
+        ordered = [
+            ("failed", "/review/failed-notes"),
+            ("fallback", "/review/fallback-notes"),
+            ("weak", "/review/weak-notes"),
+            ("missing_citations", "/review/missing-citations"),
+            ("stale", "/review/stale-notes"),
+        ]
+        for flag, route in ordered:
+            if flag in flags:
+                return route
+        return "/review/"
+
+    def _load_graph_summary(self) -> dict[str, int]:
+        graph_dir = self.data_site_dir / "public" / "graph"
+        summary = {"nodes": 0, "edges": 0, "resources": 0}
+        try:
+            nodes = Storage.read_json(graph_dir / "nodes.json")
+            edges = Storage.read_json(graph_dir / "edges.json")
+        except Exception:
+            return summary
+        if isinstance(nodes, list):
+            summary["nodes"] = len(nodes)
+            summary["resources"] = sum(
+                1 for node in nodes if isinstance(node, dict) and node.get("type") == "resource"
+            )
+        if isinstance(edges, list):
+            summary["edges"] = len(edges)
+        return summary
+
+    @staticmethod
+    def _safe_string_list(value: object) -> list[str]:
+        if not value:
+            return []
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, list):
+            return [str(item) for item in value if item]
+        if isinstance(value, (tuple, set)):
+            return [str(item) for item in value if item]
+        return []
+
+    @staticmethod
+    def _public_url(value: object) -> str:
+        text = str(value or "").strip()
+        if text.startswith(("http://", "https://")):
+            return text
+        return ""
 
     @staticmethod
     def _display_label(value: object) -> str:

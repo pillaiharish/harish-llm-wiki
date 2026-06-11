@@ -45,6 +45,7 @@ export default defineConfig({
         text: 'Data',
         items: [
           { text: 'Ingest', link: '/ingest/' },
+          { text: 'Operations', link: '/operations/' },
           { text: 'Control plane', link: '/control/' },
           { text: 'Settings', link: '/settings/' },
           { text: 'Timeline', link: '/timeline' },
@@ -152,6 +153,14 @@ export default defineConfig({
           text: 'Control plane',
           items: [
             { text: 'Provider status', link: '/control/' },
+          ]
+        }
+      ],
+      '/operations/': [
+        {
+          text: 'Operations',
+          items: [
+            { text: 'Dashboard', link: '/operations/' },
           ]
         }
       ],
