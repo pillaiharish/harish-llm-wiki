@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -254,13 +255,63 @@ deterministic fallback message: **Could not load search index. Check
         }
 
     def _sources(self, resources: list[dict[str, Any]]) -> str:
-        lines = ["# Sources", "", "| Source URL | Resource | Type | Provider/model |", "|---|---|---|---|"]
+        lines = ["# Sources", ""]
+        if resources:
+            lines.append('<div class="wiki-source-grid">')
+        else:
+            lines.append("_No sources have been indexed yet._")
+
         for item in resources:
-            lines.append(
-                f"| {md_table_cell(item.get('source_url'))} | [{md_table_cell(item['title'])}]({item['local_page']}) | "
-                f"{md_table_cell(item['type'])} | {md_table_cell(item.get('provider') or '-')} / {md_table_cell(item.get('model') or '-')} |"
+            source = item.get("source_url") or ""
+            provider = item.get("provider") or "-"
+            model = item.get("model") or "-"
+            lines.extend(
+                [
+                    '  <article class="wiki-source-card wiki-card">',
+                    '    <div class="wiki-card-meta">',
+                    (
+                        '      <span class="wiki-nowrap-chip wiki-type-chip">'
+                        f"{self._display_label(item.get('type'))}</span>"
+                    ),
+                    (
+                        '      <span class="wiki-nowrap-chip wiki-provider-chip">'
+                        f"{self._display_label(provider)}</span>"
+                    ),
+                    (
+                        '      <span class="wiki-nowrap-chip wiki-model-chip">'
+                        f"{self._display_label(model)}</span>"
+                    ),
+                    "    </div>",
+                    (
+                        '    <h2><a href="'
+                        f"{escape(str(item.get('local_page') or '#'), quote=True)}\">"
+                        f"{escape(str(item.get('title') or '(untitled)'))}</a></h2>"
+                    ),
+                    '    <p class="wiki-source-url wiki-long-token">',
+                    "      <span>Source</span>",
+                    f"      {self._source_link(source)}",
+                    "    </p>",
+                    "  </article>",
+                ]
             )
+        if resources:
+            lines.append("</div>")
         return "\n".join(lines) + "\n"
+
+    @staticmethod
+    def _display_label(value: object) -> str:
+        text = str(value or "-").replace("_", " ").strip()
+        return escape(" ".join(text.split()) or "-")
+
+    @staticmethod
+    def _source_link(source: str) -> str:
+        if not source:
+            return "<span>-</span>"
+        safe_source = escape(source)
+        safe_href = escape(source, quote=True)
+        if source.startswith(("http://", "https://")):
+            return f'<a href="{safe_href}">{safe_source}</a>'
+        return f"<code>{safe_source}</code>"
 
 
 search_index_generator = SearchIndexGenerator()

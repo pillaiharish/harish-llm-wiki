@@ -26,6 +26,7 @@ class MockProvider(LLMProvider):
         Returns realistic placeholder content for testing.
         """
         self.call_count += 1
+        self.last_usage = None
         
         # Extract resource info from prompt
         resource_title = self._extract_title(prompt)

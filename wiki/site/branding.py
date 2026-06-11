@@ -50,10 +50,25 @@ class SiteBranding(BaseModel):
     github: GitHubBranding = Field(default_factory=GitHubBranding)
 
 
+class RuntimeIdentityBranding(BaseModel):
+    """Public runtime display identity defaults.
+
+    This is intentionally presentation-only. Provider names, API keys,
+    local paths, and processing configuration do not belong here.
+    """
+
+    default_owner_name: str = "Harish"
+    default_site_title: str = "Harish LLM Wiki"
+    allow_browser_override: bool = True
+
+
 class WikiBrandingConfig(BaseModel):
     """Root branding config object."""
 
     site: SiteBranding = Field(default_factory=SiteBranding)
+    runtime_identity: RuntimeIdentityBranding = Field(
+        default_factory=RuntimeIdentityBranding
+    )
 
 
 def repo_root() -> Path:
@@ -120,6 +135,19 @@ def vitepress_branding_payload(config: WikiBrandingConfig | None = None) -> dict
     }
 
 
+def runtime_identity_payload(config: WikiBrandingConfig | None = None) -> dict[str, Any]:
+    """Return the public browser-facing runtime identity payload."""
+
+    cfg = config or load_branding_config()
+    identity = cfg.runtime_identity
+    return {
+        "schemaVersion": "runtime_identity_v1",
+        "defaultOwnerName": identity.default_owner_name,
+        "defaultSiteTitle": identity.default_site_title,
+        "allowBrowserOverride": identity.allow_browser_override,
+    }
+
+
 def render_vitepress_branding(config: WikiBrandingConfig | None = None) -> str:
     """Render the generated VitePress branding module."""
 
@@ -132,6 +160,12 @@ def render_vitepress_branding(config: WikiBrandingConfig | None = None) -> str:
     )
 
 
+def render_public_runtime_identity(config: WikiBrandingConfig | None = None) -> str:
+    """Render the public runtime identity JSON artifact."""
+
+    return json.dumps(runtime_identity_payload(config), indent=2, ensure_ascii=False) + "\n"
+
+
 def write_vitepress_branding(
     output_path: Path | None = None,
     config: WikiBrandingConfig | None = None,
@@ -142,3 +176,65 @@ def write_vitepress_branding(
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(render_vitepress_branding(config), encoding="utf-8")
     return out
+
+
+def write_public_runtime_identity(
+    output_path: Path | None = None,
+    config: WikiBrandingConfig | None = None,
+) -> Path:
+    """Write the public runtime identity JSON artifact."""
+
+    out = output_path or repo_root() / "site" / "docs" / "public" / "site-branding.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(render_public_runtime_identity(config), encoding="utf-8")
+    return out
+
+
+def write_branding_config(
+    config: WikiBrandingConfig,
+    path: str | Path | None = None,
+) -> Path:
+    """Write the public presentation config to YAML."""
+
+    selected = path or os.getenv("LLM_WIKI_CONFIG") or default_config_path()
+    out = Path(selected).expanduser()
+    if not out.is_absolute():
+        out = Path.cwd() / out
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        yaml.safe_dump(config.model_dump(), sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+    return out
+
+
+def configure_runtime_identity(
+    *,
+    owner_name: str,
+    title: str,
+    config_path: str | Path | None = None,
+    vitepress_output_path: Path | None = None,
+    public_identity_output_path: Path | None = None,
+) -> tuple[Path, Path, Path]:
+    """Update launch-time display identity and regenerate branding artifacts."""
+
+    owner = owner_name.strip()
+    site_title = title.strip()
+    if not owner:
+        raise ValueError("owner_name cannot be empty")
+    if not site_title:
+        raise ValueError("title cannot be empty")
+
+    selected_config = config_path or os.getenv("LLM_WIKI_CONFIG") or default_config_path()
+    cfg = load_branding_config(selected_config)
+    cfg.site.owner_name = owner
+    cfg.site.title = site_title
+    cfg.site.hero.name = site_title
+    cfg.site.footer_message = f"Generated with {site_title}"
+    cfg.runtime_identity.default_owner_name = owner
+    cfg.runtime_identity.default_site_title = site_title
+
+    config_out = write_branding_config(cfg, selected_config)
+    vitepress_out = write_vitepress_branding(vitepress_output_path, config=cfg)
+    public_out = write_public_runtime_identity(public_identity_output_path, config=cfg)
+    return config_out, vitepress_out, public_out

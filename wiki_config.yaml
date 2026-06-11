@@ -12,3 +12,7 @@ site:
     owner: "pillaiharish"
     repo: "harish-llm-wiki"
     branch: "main"
+runtime_identity:
+  default_owner_name: "Harish"
+  default_site_title: "Harish LLM Wiki"
+  allow_browser_override: true

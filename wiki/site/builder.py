@@ -1,6 +1,7 @@
 """Build VitePress site from generated content."""
 
 import shutil
+from html import escape
 from pathlib import Path
 from typing import List
 
@@ -15,7 +16,11 @@ from wiki.resource_utils import (
 )
 from wiki.schemas import ResourceRecord, ResourceStatus
 from wiki.storage import Storage
-from wiki.site.branding import load_branding_config, write_vitepress_branding
+from wiki.site.branding import (
+    load_branding_config,
+    write_public_runtime_identity,
+    write_vitepress_branding,
+)
 from wiki.generate.citations import (
     load_chunk_map,
     linkify_citations,
@@ -46,6 +51,10 @@ class SiteBuilder:
         self.repo_site_dir.mkdir(parents=True, exist_ok=True)
         self.data_site_dir.mkdir(parents=True, exist_ok=True)
         write_vitepress_branding(config=self.branding)
+        write_public_runtime_identity(
+            self.data_site_dir / "public" / "site-branding.json",
+            config=self.branding,
+        )
         
         # Build home page
         self._build_home(records)
@@ -166,14 +175,19 @@ hero:
 features:
   - title: 📚 {total_resources} Resources
     details: YouTube videos, blog posts, and articles ingested
+    link: /resources/
   - title: ✅ {processed_resources} Processed
     details: Resources with generated learning notes
+    link: /review/
   - title: 🔍 Full-Text Search
     details: Search across all content using VitePress
+    link: /explorer/
   - title: 📅 Timeline View
     details: Chronological learning trail
+    link: /timeline
   - title: 🧭 Ingest Guide
     details: Add resources safely with dry-runs, mock processing, and token controls
+    link: /ingest/
 ---
 
 ## Welcome
@@ -194,6 +208,7 @@ This static learning wiki is generated from:
 - [Browse by tag](/tags/)
 - [Knowledge gaps](/gaps)
 - [Ingest and processing guide](/ingest/)
+- [Display settings](/settings/)
 
 ## How to Use
 
@@ -218,6 +233,7 @@ Do not publish publicly unless content is appropriate for public sharing.
         """Build the resources section."""
         resources_dir = self.data_site_dir / "resources"
         resources_dir.mkdir(exist_ok=True)
+        resource_records = list(dedupe_records(records))
         
         # Create index
         index_lines = [
@@ -225,11 +241,14 @@ Do not publish publicly unless content is appropriate for public sharing.
             "",
             "All ingested learning resources.",
             "",
-            "| Title | Type | Status | Date |",
-            "|-------|------|--------|------|",
         ]
-        
-        for record in dedupe_records(records):
+
+        if resource_records:
+            index_lines.append('<div class="wiki-resource-grid">')
+        else:
+            index_lines.append("_No resources have been ingested yet._")
+
+        for record in resource_records:
             title = display_title(record, mark_missing=True)
             status = record.status.value
             date = learned_date(record).strftime("%Y-%m-%d")
@@ -271,15 +290,52 @@ Do not publish publicly unless content is appropriate for public sharing.
                     resource_path,
                 )
 
-            link = f"[{md_table_cell(title)}]({resource_route(record.id)})"
-            
-            index_lines.append(f"| {link} | {md_table_cell(record.source_type.value)} | {md_table_cell(status)} | {date} |")
+            route = resource_route(record.id)
+            index_lines.extend(
+                [
+                    '  <article class="wiki-resource-card wiki-card">',
+                    '    <div class="wiki-card-meta">',
+                    (
+                        '      <span class="wiki-nowrap-chip wiki-type-chip">'
+                        f"{self._display_label(record.source_type.value)}</span>"
+                    ),
+                    (
+                        '      <span class="wiki-nowrap-chip wiki-status-chip '
+                        f"wiki-status-{self._class_token(status)}\">"
+                        f"{self._display_label(status)}</span>"
+                    ),
+                    (
+                        '      <time class="wiki-nowrap-chip wiki-date-cell" '
+                        f"datetime=\"{escape(date, quote=True)}\">{escape(date)}</time>"
+                    ),
+                    "    </div>",
+                    f'    <h2><a href="{escape(route, quote=True)}">{escape(title)}</a></h2>',
+                    f'    <p class="wiki-resource-id wiki-long-token"><span>Resource id</span><code>{escape(record.id)}</code></p>',
+                    "  </article>",
+                ]
+            )
+
+        if resource_records:
+            index_lines.append("</div>")
         
         index_lines.append("")
         index_content = "\n".join(index_lines)
         
         index_path = resources_dir / "index.md"
         Storage.write_text(index_content, index_path)
+
+    @staticmethod
+    def _display_label(value: object) -> str:
+        """Return a compact human label for generated cards/chips."""
+        text = str(value or "-").replace("_", " ").strip()
+        return escape(" ".join(text.split()) or "-")
+
+    @staticmethod
+    def _class_token(value: object) -> str:
+        """Return a safe CSS class suffix for generated values."""
+        raw = str(value or "unknown").lower()
+        token = "".join(ch if ch.isalnum() else "-" for ch in raw)
+        return "-".join(part for part in token.split("-") if part) or "unknown"
     
     def _build_timeline(self) -> None:
         """Build the timeline page."""

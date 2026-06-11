@@ -45,6 +45,8 @@ export default defineConfig({
         text: 'Data',
         items: [
           { text: 'Ingest', link: '/ingest/' },
+          { text: 'Control plane', link: '/control/' },
+          { text: 'Settings', link: '/settings/' },
           { text: 'Timeline', link: '/timeline' },
           { text: 'Chunks', link: '/chunks/' },
         ],
@@ -142,6 +144,22 @@ export default defineConfig({
           text: 'Ingest',
           items: [
             { text: 'Workflow', link: '/ingest/' },
+          ]
+        }
+      ],
+      '/control/': [
+        {
+          text: 'Control plane',
+          items: [
+            { text: 'Provider status', link: '/control/' },
+          ]
+        }
+      ],
+      '/settings/': [
+        {
+          text: 'Settings',
+          items: [
+            { text: 'Display identity', link: '/settings/' },
           ]
         }
       ],

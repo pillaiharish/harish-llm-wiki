@@ -72,6 +72,9 @@ site/docs/gaps.md
 site/docs/index.md
 site/docs/**/*.html
 site/docs/**/*.json
+!site/docs/public/
+site/docs/public/*
+!site/docs/public/site-branding.json
 dist/
 
 # =============================================================================

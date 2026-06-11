@@ -131,31 +131,14 @@ class TimelineGenerator:
 
             for topic_slug in sorted(grouped):
                 if topic_slug == "uncategorized":
-                    if not uncategorized_anchor_written:
-                        lines.extend(
-                            [
-                                '<span id="needs-classification"></span>',
-                                '<span id="uncategorized"></span>',
-                                "",
-                            ]
-                        )
-                        uncategorized_anchor_written = True
                     topic_name = "Needs classification"
                     lines.extend(
-                        [
-                            f"### {topic_name}",
-                            "",
-                            '<div class="timeline-classification-note">',
-                            "These resources are intake items missing topic or concept",
-                            "metadata. They are not learning categories yet.",
-                            'Fix them from <a href="/review/">Review</a>,',
-                            '<a href="/resources/">Resources</a>, or the',
-                            '<a href="/ingest/">Ingest workflow</a>.',
-                            '<a class="timeline-classification-cta" href="/ingest/#after-ingest">Fix classification metadata</a>',
-                            "</div>",
-                            "",
-                        ]
+                        self._classification_section_lines(
+                            heading=topic_name,
+                            include_anchors=not uncategorized_anchor_written,
+                        )
                     )
+                    uncategorized_anchor_written = True
                 else:
                     topic_name = TOPIC_DEFINITIONS.get(topic_slug, {}).get("name", topic_slug.title())
                     lines.extend([f"### {topic_name}", ""])
@@ -167,8 +150,46 @@ class TimelineGenerator:
             
             lines.append("---")
             lines.append("")
+
+        if not uncategorized_anchor_written:
+            lines.extend(
+                self._classification_section_lines(
+                    heading="Needs classification",
+                    include_anchors=True,
+                )
+            )
+            lines.extend(["_No resources currently need classification._", ""])
         
         return "\n".join(lines)
+
+    def _classification_section_lines(self, *, heading: str, include_anchors: bool) -> list[str]:
+        """Return the timeline classification guidance section."""
+
+        lines: list[str] = []
+        if include_anchors:
+            lines.extend(
+                [
+                    '<span id="needs-classification"></span>',
+                    '<span id="uncategorized"></span>',
+                    "",
+                ]
+            )
+        lines.extend(
+            [
+                f"### {heading}",
+                "",
+                '<div class="timeline-classification-note">',
+                "These resources are intake items missing topic or concept",
+                "metadata. They are not learning categories yet.",
+                'Fix them from <a href="/review/">Review</a>,',
+                '<a href="/resources/">Resources</a>, or the',
+                '<a href="/ingest/">Ingest workflow</a>.',
+                '<a class="timeline-classification-cta" href="/ingest/#after-ingest">Fix classification metadata</a>',
+                "</div>",
+                "",
+            ]
+        )
+        return lines
 
     def _summary(self, record: ResourceRecord) -> str:
         """Return a compact one-line timeline summary."""

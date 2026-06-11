@@ -71,9 +71,23 @@ from wiki.vector import (
     write_vector_index as write_vector_index_files,
 )
 from wiki.site.builder import site_builder
+from wiki.site.branding import configure_runtime_identity
 from wiki.enrich.metadata import youtube_metadata_enricher, webpage_metadata_enricher
 from wiki.resource_utils import is_replaceable_title, topic_matches
 from wiki.storage import Storage
+from wiki.control_plane import (
+    DEFAULT_HOST as CONTROL_PLANE_DEFAULT_HOST,
+    DEFAULT_PORT as CONTROL_PLANE_DEFAULT_PORT,
+    is_loopback_host,
+    serve_control_plane,
+)
+from wiki.runs import (
+    get_run,
+    read_processing_runs,
+    read_token_ledger,
+    record_dry_run_plan,
+    token_ledger_summary,
+)
 
 
 def normalize_provider_name(name: str | None) -> str:
@@ -132,6 +146,10 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+runs_app = typer.Typer(help="Inspect local processing run accounting.")
+token_ledger_app = typer.Typer(help="Inspect local token usage accounting.")
+app.add_typer(runs_app, name="runs")
+app.add_typer(token_ledger_app, name="token-ledger")
 
 
 def get_provider() -> LLMProvider:
@@ -1178,24 +1196,54 @@ def process_new(
             if record.status == ResourceStatus.NEEDS_MANUAL_MARKDOWN:
                 console.print("  [yellow]⚠ Would mark as 'needs_manual_markdown'[/yellow]")
                 would_need_manual += 1
+                dry_provider, dry_model = configured_provider_model()
+                record_dry_run_plan(
+                    record=record,
+                    provider=dry_provider,
+                    model=dry_model,
+                    would_ingest=False,
+                    would_normalize=False,
+                    would_call_llm=False,
+                    would_cache_hit=False,
+                    would_need_manual=True,
+                )
                 continue
             
+            plan_would_ingest = False
+            plan_would_normalize = False
+            plan_would_call_llm = False
+            plan_would_cache_hit = False
             if can_skip_ingest:
                 console.print("  [dim]  - Skip ingest/normalize (chunks exist)[/dim]")
             else:
                 console.print("  [dim]  - Would ingest raw content[/dim]")
                 would_ingest += 1
+                plan_would_ingest = True
                 
                 console.print("  [dim]  - Would normalize and chunk[/dim]")
                 would_normalize += 1
+                plan_would_normalize = True
             
             # Check if note exists and cache inputs still match
             if not would_regenerate_note(record, force=force or force_all or only_stale):
                 console.print("  [dim]  - Expected LLM cache hit[/dim]")
                 would_cache_hit += 1
+                plan_would_cache_hit = True
             else:
                 console.print("  [dim]  - Would call LLM ({})[/dim]".format(config.LLM_PROVIDER))
                 would_call_llm += 1
+                plan_would_call_llm = True
+
+            dry_provider, dry_model = configured_provider_model()
+            record_dry_run_plan(
+                record=record,
+                provider=dry_provider,
+                model=dry_model,
+                would_ingest=plan_would_ingest,
+                would_normalize=plan_would_normalize,
+                would_call_llm=plan_would_call_llm,
+                would_cache_hit=plan_would_cache_hit,
+            )
             
             continue
         
@@ -2653,6 +2701,165 @@ def test_llm(
     console.print(f"LLM provider: {provider}")
     console.print(f"Model: {llm.model}")
     console.print(f"Response: {response[:100]}")
+
+
+@app.command("configure-site")
+def configure_site(
+    owner_name: str = typer.Option(
+        ...,
+        "--owner-name",
+        help="Public display owner name for generated site branding.",
+    ),
+    title: str = typer.Option(
+        ...,
+        "--title",
+        help="Public site title for generated site branding.",
+    ),
+):
+    """Configure public site identity without touching provider secrets."""
+
+    try:
+        config_path, vitepress_path, public_path = configure_runtime_identity(
+            owner_name=owner_name,
+            title=title,
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    console.print("[green]✓[/green] Updated public site identity")
+    console.print(f"  Config: {config_path}")
+    console.print(f"  VitePress branding: {vitepress_path}")
+    console.print(f"  Public browser defaults: {public_path}")
+    console.print("\nNext recommended command:")
+    console.print("  .venv/bin/python -m wiki build-site --refresh")
+
+
+@runs_app.command("list")
+def list_runs(
+    limit: int = typer.Option(20, "--limit", "-n", min=1, help="Maximum recent runs to show"),
+):
+    """List recent local processing run accounting rows."""
+
+    rows = list(reversed(read_processing_runs(limit=limit)))
+    if not rows:
+        console.print("[dim]No processing runs recorded yet.[/dim]")
+        return
+
+    table = Table(title="Recent processing runs", box=box.SIMPLE_HEAVY)
+    table.add_column("Run ID", overflow="fold")
+    table.add_column("Resource", overflow="fold")
+    table.add_column("Operation")
+    table.add_column("Status")
+    table.add_column("Provider/model", overflow="fold")
+    table.add_column("Tokens", justify="right")
+    table.add_column("Completed")
+    for row in rows:
+        table.add_row(
+            str(row.get("run_id") or ""),
+            str(row.get("resource_id") or ""),
+            str(row.get("operation") or ""),
+            str(row.get("status") or ""),
+            f"{row.get('provider') or '-'} / {row.get('model') or '-'}",
+            str(row.get("total_tokens") or 0),
+            str(row.get("completed_at") or ""),
+        )
+    console.print(table)
+
+
+@runs_app.command("show")
+def show_run(run_id: str = typer.Argument(..., help="Run ID to inspect")):
+    """Show one local processing run row as JSON."""
+
+    row = get_run(run_id)
+    if not row:
+        console.print(f"[red]Run not found:[/red] {run_id}")
+        raise typer.Exit(1)
+    console.print_json(data=row)
+
+
+@token_ledger_app.command("summary")
+def show_token_ledger_summary(
+    recent: int = typer.Option(5, "--recent", min=0, help="Recent token ledger rows to show"),
+):
+    """Show local token ledger totals without calling providers."""
+
+    summary = token_ledger_summary()
+    console.print("[bold blue]Token ledger summary[/bold blue]\n")
+    console.print(f"Runs: {summary['run_count']}")
+    console.print(f"Ledger entries: {summary['ledger_entry_count']}")
+    console.print(f"Total tokens: {summary['total_tokens']}")
+    console.print(f"Estimated cost: ${summary['estimated_cost']:.6f}")
+
+    provider_rows = summary.get("by_provider") or {}
+    if provider_rows:
+        table = Table(title="By provider", box=box.SIMPLE_HEAVY)
+        table.add_column("Provider")
+        table.add_column("Entries", justify="right")
+        table.add_column("Tokens", justify="right")
+        table.add_column("Estimated cost", justify="right")
+        for provider, item in provider_rows.items():
+            table.add_row(
+                provider,
+                str(item.get("entries") or 0),
+                str(item.get("total_tokens") or 0),
+                f"${float(item.get('estimated_cost') or 0.0):.6f}",
+            )
+        console.print(table)
+
+    if recent:
+        rows = list(reversed(read_token_ledger(limit=recent)))
+        if rows:
+            table = Table(title="Recent token ledger rows", box=box.SIMPLE_HEAVY)
+            table.add_column("Run ID", overflow="fold")
+            table.add_column("Resource", overflow="fold")
+            table.add_column("Provider/model", overflow="fold")
+            table.add_column("Tokens", justify="right")
+            table.add_column("Usage")
+            for row in rows:
+                table.add_row(
+                    str(row.get("run_id") or ""),
+                    str(row.get("resource_id") or ""),
+                    f"{row.get('provider') or '-'} / {row.get('model') or '-'}",
+                    str(row.get("total_tokens") or 0),
+                    str(row.get("usage_source") or ""),
+                )
+            console.print(table)
+
+
+@app.command("control-plane")
+def control_plane(
+    host: str = typer.Option(
+        CONTROL_PLANE_DEFAULT_HOST,
+        "--host",
+        help="Host to bind. Defaults to loopback only.",
+    ),
+    port: int = typer.Option(
+        CONTROL_PLANE_DEFAULT_PORT,
+        "--port",
+        help="Port for the local control-plane API.",
+    ),
+    unsafe_lan: bool = typer.Option(
+        False,
+        "--unsafe-lan",
+        help="Allow non-loopback binding such as 0.0.0.0.",
+    ),
+):
+    """Run the local-only provider/model control plane."""
+
+    if not is_loopback_host(host) and not unsafe_lan:
+        console.print(
+            "[red]Refusing non-loopback bind without --unsafe-lan.[/red]\n"
+            "Use --host 127.0.0.1 for local-only access."
+        )
+        raise typer.Exit(1)
+
+    if not is_loopback_host(host):
+        console.print("[yellow]Warning:[/yellow] --unsafe-lan exposes local status on the LAN.")
+
+    console.print(f"[green]✓[/green] Starting control plane at http://{host}:{port}")
+    console.print("  Metadata-only checks; no generation calls or token-consuming processing.")
+    serve_control_plane(host=host, port=port)
 
 
 @app.command()

@@ -1008,7 +1008,7 @@ class TestBM25Boundaries:
 
         # Now create a minimal set of expected routes and confirm
         # the script exits 0.
-        for sub in ("graph", "chunks", "search", "ingest"):
+        for sub in ("graph", "chunks", "search", "ingest", "control", "settings"):
             (tmp_path / sub).mkdir(parents=True, exist_ok=True)
         (tmp_path / "graph").joinpath("index.md").write_text("# Graph\n", encoding="utf-8")
         (tmp_path / "graph").joinpath("explore.md").write_text("# Explore\n", encoding="utf-8")
@@ -1018,8 +1018,26 @@ class TestBM25Boundaries:
             "# RR\n", encoding="utf-8"
         )
         (tmp_path / "ingest").joinpath("index.md").write_text("# Ingest\n", encoding="utf-8")
+        (tmp_path / "control").joinpath("index.md").write_text(
+            "# Control\n", encoding="utf-8"
+        )
+        (tmp_path / "settings").joinpath("index.md").write_text(
+            "# Settings\n", encoding="utf-8"
+        )
         (tmp_path / "chunks").joinpath("index.md").write_text("# Chunks\n", encoding="utf-8")
         (tmp_path / "search").joinpath("bm25.md").write_text("# BM25\n", encoding="utf-8")
+        (tmp_path / "public").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "public").joinpath("site-branding.json").write_text(
+            json.dumps(
+                {
+                    "schemaVersion": "runtime_identity_v1",
+                    "defaultOwnerName": "Harish",
+                    "defaultSiteTitle": "Harish LLM Wiki",
+                    "allowBrowserOverride": True,
+                }
+            ),
+            encoding="utf-8",
+        )
         (tmp_path / "public" / "chunks").mkdir(parents=True, exist_ok=True)
         (tmp_path / "public" / "chunks").joinpath("chunks.json").write_text("[]", encoding="utf-8")
         (tmp_path / "public" / "chunks").joinpath("manifest.json").write_text(

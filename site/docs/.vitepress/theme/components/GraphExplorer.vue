@@ -1995,22 +1995,24 @@ const selectedDisplay = computed<string>(() => {
               </li>
             </ul>
             <h4>Top connected nodes</h4>
-            <ol id="graph-stat-top-nodes" :data-count="topConnectedNodes.length">
+            <ol id="graph-stat-top-nodes" class="ge-top-nodes" :data-count="topConnectedNodes.length">
               <li
-                v-for="entry in topConnectedNodes"
+                v-for="(entry, index) in topConnectedNodes"
                 :key="entry.node.id"
+                class="ge-top-node-row"
                 :data-node-id="entry.node.id"
                 :data-degree="entry.degree"
               >
                 <button
                   type="button"
-                  class="gn-pick"
+                  class="gn-pick ge-top-node-button"
                   :data-node-id="entry.node.id"
                   @click="pickNeighbor(entry.node.id)"
                 >
+                  <span class="ge-top-rank">{{ index + 1 }}</span>
                   <span class="gn-type">{{ entry.node.type }}</span>
                   <span class="gn-label">{{ entry.node.label || entry.node.id }}</span>
-                  <small>(degree: {{ entry.degree }})</small>
+                  <span class="ge-degree-badge">degree {{ entry.degree }}</span>
                 </button>
               </li>
             </ol>
@@ -2234,12 +2236,12 @@ const selectedDisplay = computed<string>(() => {
                 <a :href="nodeRoute(selectedNode) || '#'">{{ nodeRoute(selectedNode) }}</a>
               </p>
               <h5>Metadata</h5>
-              <table v-if="Object.keys(selectedNode.metadata || {}).length" class="ge-metadata-table">
-                <tr v-for="(v, k) in (selectedNode.metadata || {})" :key="String(k)">
-                  <td>{{ String(k) }}</td>
-                  <td>{{ String(v) }}</td>
-                </tr>
-              </table>
+              <dl v-if="Object.keys(selectedNode.metadata || {}).length" class="ge-metadata-grid">
+                <div v-for="(v, k) in (selectedNode.metadata || {})" :key="String(k)" class="ge-metadata-row">
+                  <dt>{{ String(k) }}</dt>
+                  <dd>{{ String(v) }}</dd>
+                </div>
+              </dl>
               <p v-else><em>No metadata.</em></p>
             </div>
             <div v-else-if="selectedEdge">
@@ -2251,12 +2253,12 @@ const selectedDisplay = computed<string>(() => {
                 <strong>To:</strong> {{ selectedEdge.target }}
               </p>
               <h5>Metadata</h5>
-              <table v-if="Object.keys(selectedEdge.metadata || {}).length" class="ge-metadata-table">
-                <tr v-for="(v, k) in (selectedEdge.metadata || {})" :key="String(k)">
-                  <td>{{ String(k) }}</td>
-                  <td>{{ String(v) }}</td>
-                </tr>
-              </table>
+              <dl v-if="Object.keys(selectedEdge.metadata || {}).length" class="ge-metadata-grid">
+                <div v-for="(v, k) in (selectedEdge.metadata || {})" :key="String(k)" class="ge-metadata-row">
+                  <dt>{{ String(k) }}</dt>
+                  <dd>{{ String(v) }}</dd>
+                </div>
+              </dl>
               <p v-else><em>No metadata.</em></p>
             </div>
           </div>
@@ -2450,9 +2452,49 @@ const selectedDisplay = computed<string>(() => {
 .ge-stat-value {
   font-variant-numeric: tabular-nums;
 }
-#graph-stat-top-nodes {
+.ge-top-nodes {
   margin: 0;
-  padding-left: 1.2rem;
+  padding-left: 0;
+  list-style: none;
+}
+.ge-top-node-row {
+  margin: 0 0 0.35rem;
+}
+.ge-top-node-button {
+  display: grid;
+  grid-template-columns: 2rem max-content minmax(0, 1fr) max-content;
+  gap: 0.45rem;
+  align-items: center;
+  min-width: 0;
+  border-radius: 6px;
+}
+.ge-top-rank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 999px;
+  background: var(--vp-c-default-soft, #eef);
+  color: var(--vp-c-text-2, #555);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+.ge-degree-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0.08rem 0.42rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vp-c-brand-soft) 55%, var(--vp-c-default-soft));
+  color: var(--vp-c-text-1, #222);
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 .ge-checkbox {
   margin-right: 0.75rem;
@@ -2508,6 +2550,12 @@ const selectedDisplay = computed<string>(() => {
   border-radius: 3px;
   background: var(--vp-c-default-soft, #eef);
   margin-right: 0.3rem;
+}
+.ge-top-node-button .gn-type {
+  margin-right: 0;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 .ge-path-controls {
   border: 1px solid var(--vp-c-divider, #ccc);
@@ -2584,20 +2632,45 @@ const selectedDisplay = computed<string>(() => {
 #graph-edges code,
 .gn-label,
 .ge-inline-meta,
-.ge-metadata-table td {
+.ge-metadata-grid dd {
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
 }
+.gn-label {
+  min-width: 0;
+}
 .ge-action-row {
   margin: 0.75rem 0;
 }
-.ge-metadata-table {
-  width: 100%;
-  table-layout: fixed;
+.ge-metadata-grid {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+  min-width: 0;
 }
-.ge-metadata-table td {
-  vertical-align: top;
+.ge-metadata-row {
+  display: grid;
+  grid-template-columns: minmax(7.5rem, max-content) minmax(0, 1fr);
+  gap: 0.65rem;
+  align-items: start;
+  min-width: 0;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--vp-c-divider, #ddd);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--vp-c-bg-soft) 58%, transparent);
+}
+.ge-metadata-row dt {
+  margin: 0;
+  color: var(--vp-c-text-2, #555);
+  font-weight: 700;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.ge-metadata-row dd {
+  min-width: 0;
+  margin: 0;
 }
 #graph-node-list,
 #graph-neighbors,
@@ -2639,6 +2712,17 @@ const selectedDisplay = computed<string>(() => {
   }
   .ge-path-controls {
     width: 100%;
+  }
+  .ge-top-node-button {
+    grid-template-columns: 2rem minmax(0, 1fr);
+  }
+  .ge-top-node-button .gn-type,
+  .ge-top-node-button .ge-degree-badge {
+    grid-column: 2;
+  }
+  .ge-metadata-row {
+    grid-template-columns: 1fr;
+    gap: 0.2rem;
   }
   #graph-filter-node-type,
   #graph-filter-edge-type {
